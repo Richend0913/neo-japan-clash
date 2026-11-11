@@ -1,0 +1,92 @@
+/* NEO JAPAN CLASH — レイアウトと画面上ゲームパッド */
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; width: 100%; height: 100%; overflow: hidden; background: #05030f; color: #fff;
+  font-family: "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", Meiryo, sans-serif;
+  touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; overscroll-behavior: none;
+}
+body { position: fixed; inset: 0; }
+#game { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: block; background: #07041c; }
+
+#pad { position: fixed; inset: 0; pointer-events: none; --fb: clamp(56px, 7.6vw, 72px); --dp: clamp(140px, 19vw, 180px); }
+body.nopad #dpad, body.nopad #btns, body.nopad .sb { display: none; }
+
+/* 十字キー（左下） */
+#dpad {
+  position: absolute; left: max(10px, env(safe-area-inset-left)); bottom: max(10px, env(safe-area-inset-bottom));
+  width: var(--dp); height: var(--dp); border-radius: 50%;
+  background: radial-gradient(circle, rgba(20, 10, 50, .30) 0 62%, rgba(20, 10, 50, .12) 63% 100%);
+}
+.da {
+  position: absolute; width: 34%; height: 34%; display: flex; align-items: center; justify-content: center;
+  background: rgba(24, 14, 60, .40); border: 2px solid rgba(160, 235, 255, .55);
+  transition: transform .05s, background .05s;
+}
+#dU { left: 33%; top: 1%; border-radius: 12px 12px 0 0; border-bottom: none; }
+#dD { left: 33%; bottom: 1%; border-radius: 0 0 12px 12px; border-top: none; }
+#dL { left: 1%; top: 33%; border-radius: 12px 0 0 12px; border-right: none; }
+#dR { right: 1%; top: 33%; border-radius: 0 12px 12px 0; border-left: none; }
+.dc { position: absolute; left: 33%; top: 33%; width: 34%; height: 34%; background: rgba(24, 14, 60, .40); }
+.da i { width: 0; height: 0; border: 9px solid transparent; }
+#dU i { border-bottom-color: rgba(200, 245, 255, .9); margin-top: -9px; }
+#dD i { border-top-color: rgba(200, 245, 255, .9); margin-bottom: -9px; }
+#dL i { border-right-color: rgba(200, 245, 255, .9); margin-left: -9px; }
+#dR i { border-left-color: rgba(200, 245, 255, .9); margin-right: -9px; }
+.da.on { background: rgba(95, 224, 255, .75); box-shadow: 0 0 18px rgba(95, 224, 255, .9); }
+
+/* △□○×（右下・ダイヤ配置） */
+#btns {
+  position: absolute; right: max(10px, env(safe-area-inset-right)); bottom: max(10px, env(safe-area-inset-bottom));
+  width: calc(var(--fb) * 2.9); height: calc(var(--fb) * 2.9);
+}
+.fb {
+  position: absolute; width: var(--fb); height: var(--fb); border-radius: 50%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1;
+  background: rgba(24, 14, 60, .50); border: 2.5px solid var(--c); color: var(--c);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--c) 45%, transparent), inset 0 0 10px rgba(255, 255, 255, .08);
+  transition: transform .05s, background .05s;
+}
+.fb b { font-size: calc(var(--fb) * .42); font-weight: 900; }
+.fb span { font-size: calc(var(--fb) * .17); font-weight: 700; color: rgba(255, 255, 255, .85); margin-top: 1px; }
+.fb.tri { --c: #4dffb4; left: calc(50% - var(--fb) / 2); top: 0; }
+.fb.sqr { --c: #ff8ad8; left: 0; top: calc(50% - var(--fb) / 2); }
+.fb.cir { --c: #ff5d6c; right: 0; top: calc(50% - var(--fb) / 2); }
+.fb.crs { --c: #6fb7ff; left: calc(50% - var(--fb) / 2); bottom: 0; }
+.fb.on { transform: scale(.9); background: var(--c); color: #12061f; box-shadow: 0 0 22px var(--c); }
+.fb.on span { color: #12061f; }
+
+/* L / R（上部両端） */
+.sb {
+  position: absolute; top: max(6px, env(safe-area-inset-top)); width: clamp(64px, 10vw, 92px); height: clamp(34px, 5.4vw, 44px);
+  display: flex; align-items: center; justify-content: center; font-weight: 900; font-style: italic; font-size: 18px;
+  background: rgba(24, 14, 60, .50); border: 2px solid rgba(255, 212, 71, .75); color: #ffd447;
+  transition: transform .05s, background .05s;
+}
+#bL { left: max(8px, env(safe-area-inset-left)); border-radius: 18px 8px 8px 8px; }
+#bR { right: max(8px, env(safe-area-inset-right)); border-radius: 8px 18px 8px 8px; }
+.sb.on { background: #ffd447; color: #12061f; transform: translateY(2px); box-shadow: 0 0 18px #ffd447; }
+
+/* ミュート / ポーズ */
+.mini {
+  position: absolute; top: calc(max(6px, env(safe-area-inset-top)) + clamp(34px, 5.4vw, 44px) + 8px);
+  width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  font-size: 18px; font-weight: 900; background: rgba(24, 14, 60, .55); border: 2px solid rgba(255, 255, 255, .5); color: #fff;
+}
+#bMute { left: max(8px, env(safe-area-inset-left)); }
+#bMenu { right: max(8px, env(safe-area-inset-right)); }
+#bMute.off { color: #ff5d6c; border-color: #ff5d6c; text-decoration: line-through; }
+
+/* 縦向き時の案内 */
+#rotate {
+  position: fixed; inset: 0; z-index: 10; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  background: radial-gradient(circle at 50% 40%, #2a0f4f, #05030f 75%); text-align: center;
+}
+body.portrait #rotate { display: flex; }
+body.portrait #pad { display: none; }
+#rotate p { margin: 0; font-size: 26px; font-weight: 900; color: #ffd447; text-shadow: 0 0 14px #ff4fa8; }
+#rotate small { color: #9cf3ff; font-size: 13px; }
+#rotate .phone {
+  width: 54px; height: 92px; border: 4px solid #5fe0ff; border-radius: 10px; box-shadow: 0 0 18px #5fe0ff;
+  animation: rot 2.2s ease-in-out infinite;
+}
+@keyframes rot { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }

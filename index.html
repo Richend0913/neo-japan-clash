@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#07041c">
+<title>NEO JAPAN CLASH（仮）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<canvas id="game" width="960" height="540"></canvas>
+
+<!-- PSP方式の画面上ゲームパッド：左下=十字キー / 右下=△□○×（ダイヤ配置）/ 上部両端=L・R -->
+<div id="pad" aria-hidden="true">
+  <div id="bL" class="sb">L</div>
+  <div id="bR" class="sb">R</div>
+  <div id="bMute" class="mini">♪</div>
+  <div id="bMenu" class="mini">Ⅱ</div>
+  <div id="dpad">
+    <div id="dU" class="da"><i></i></div>
+    <div id="dL" class="da"><i></i></div>
+    <div id="dR" class="da"><i></i></div>
+    <div id="dD" class="da"><i></i></div>
+    <div class="dc"></div>
+  </div>
+  <div id="btns">
+    <div class="fb tri" data-b="G"><b>△</b><span>ガード</span></div>
+    <div class="fb sqr" data-b="S"><b>□</b><span>必殺</span></div>
+    <div class="fb cir" data-b="A"><b>○</b><span>弱</span></div>
+    <div class="fb crs" data-b="H"><b>×</b><span>強</span></div>
+  </div>
+</div>
+
+<div id="rotate"><div class="phone"></div><p>横にしてください</p><small>このゲームは横画面専用です</small></div>
+
+<script src="js/data.js"></script>
+<script src="js/sim.js"></script>
+<script src="js/draw.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/input.js"></script>
+<script src="js/net.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
