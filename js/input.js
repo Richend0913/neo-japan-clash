@@ -37,7 +37,7 @@
   function dpadBits(x, y) {
     const r = dpad.getBoundingClientRect(); if (!r.width) return -1;
     const cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2, dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
-    if (d >= R * 1.15) return -1;
+    if (d >= R * 1.3) return -1;
     if (d < R * 0.22) return 0;
     for (const b in arrows) { const q = arrows[b].getBoundingClientRect(); if (x >= q.left && x <= q.right && y >= q.top && y <= q.bottom) return +b; }
     const a = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
@@ -64,6 +64,16 @@
       const r = s.el.getBoundingClientRect(); if (!r.width) continue;
       const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
       if (x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12 && d < bd) { bd = d; best = s; }
+    }
+    if (!best) { // ボタン群の範囲内なら、個別の半径の外でも一番近い丸ボタンを拾う（指の腹で押す実機向け）
+      const br = $('btns').getBoundingClientRect();
+      if (br.width && x > br.left - 14 && x < br.right + 14 && y > br.top - 14 && y < br.bottom + 14) {
+        for (const f of faces) {
+          const r = f.el.getBoundingClientRect(); if (!r.width) continue;
+          const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
+          if (d < bd) { bd = d; best = f; }
+        }
+      }
     }
     return best ? { bits: best.bit, els: [best.el] } : null;
   }
