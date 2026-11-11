@@ -29,13 +29,21 @@
     im.onload = () => { e.ok = im.naturalWidth > 0; }; im.onerror = () => { e.bad = true; };
     im.src = src; return e;
   }
+  // 画像は必要になった時点で読み込む（起動時に全71枚・約6.5MBを先読みすると、回線の遅いスマホでは
+  // タイトルが出る前に固まって見えるため）。読み込み前・読み込み中はベクター描画にフォールバックする。
   load('stage', 'assets/stage.webp');
-  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.webp`, ART[id][0]); load('p:' + id, `assets/portraits/${id}.webp`); }
-  // ポーズ絵は待機絵・ポートレートの後に読み込む（先に届いた待機絵だけでも遊べる）
-  for (const id in ART) POSES.forEach((ps, n) => load('s:' + id + ':' + ps, `assets/sprites/${id}_${ps}.webp`, ART[id][n + 1]));
+  const REQ = {};
+  function want(key, src, ax) { if (!REQ[key]) { REQ[key] = true; load(key, src, ax); } }
+  function wantIdle(ci) { const id = CHARS[ci].id; if (ART[id]) want('s:' + id, `assets/sprites/${id}.webp`, ART[id][0]); }
+  function wantPortrait(ci) { const id = CHARS[ci].id; if (ART[id]) want('p:' + id, `assets/portraits/${id}.webp`); }
+  function wantPose(ci, ps) { const id = CHARS[ci].id, n = POSES.indexOf(ps); if (ART[id] && n >= 0) want('s:' + id + ':' + ps, `assets/sprites/${id}_${ps}.webp`, ART[id][n + 1]); }
+  function preloadFighter(ci) { wantIdle(ci); wantPortrait(ci); POSES.forEach(ps => wantPose(ci, ps)); }
+  function preloadPortraits() { CHARS.forEach((c, i) => wantPortrait(i)); }
+  function preloadAll() { CHARS.forEach((c, i) => preloadFighter(i)); }
   const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
-  const spriteOf = ci => ready('s:' + CHARS[ci].id), portraitOf = ci => ready('p:' + CHARS[ci].id);
-  const poseOf = (ci, ps) => ready('s:' + CHARS[ci].id + ':' + ps);
+  const spriteOf = ci => { wantIdle(ci); return ready('s:' + CHARS[ci].id); };
+  const portraitOf = ci => { wantPortrait(ci); return ready('p:' + CHARS[ci].id); };
+  const poseOf = (ci, ps) => { wantPose(ci, ps); return ready('s:' + CHARS[ci].id + ':' + ps); };
   // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
   function anchorX(e, id) {
     if (e.ax != null) return e.ax;
@@ -768,5 +776,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, poseKind, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
 })();

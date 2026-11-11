@@ -111,6 +111,7 @@
   const B_BACK = { x: 366, y: 492, w: 106, h: 38 }, B_OK = { x: 488, y: 492, w: 106, h: 38 };
   const inR = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   function Select(o) {
+    D.preloadPortraits();
     let cur = o.cur || 0; setBtns([]);
     function pick() {
       if (o.gallery) return;
@@ -174,7 +175,7 @@
 
   // ================= VS 画面 =================
   function VS(c0, c1, label, labels, next) {
-    let t = 0; setBtns([]); A.play('special');
+    let t = 0; setBtns([]); A.play('special'); D.preloadFighter(c0); D.preloadFighter(c1);
     return {
       kind: 'vs',
       update(m, pr) { t++; if (t > 120 || (t > 20 && (pr & (K.A | I.OK)))) next(); },
@@ -467,6 +468,7 @@
   let last = 0, acc = 0;
   function frame(ts) {
     requestAnimationFrame(frame);
+    if (!frame.booted) { frame.booted = true; const b = document.getElementById('boot'); if (b) b.remove(); }
     if (!last) last = ts;
     acc += Math.min(100, ts - last); last = ts;
     let n = 0;

@@ -90,3 +90,9 @@ body.portrait #pad { display: none; }
   animation: rot 2.2s ease-in-out infinite;
 }
 @keyframes rot { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+
+#boot { position: fixed; inset: 0; z-index: 60; background: #07041c; color: #eaf6ff; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; font-family: sans-serif; text-align: center; padding: 0 24px; }
+#boot .bt1 { font-size: 28px; font-weight: 900; letter-spacing: .12em; color: #7df9ff; text-shadow: 0 0 18px rgba(0,229,255,.8); }
+#boot .bt2 { font-size: 16px; animation: bootblink 1.2s ease-in-out infinite; }
+#boot .bt3 { font-size: 12px; opacity: .65; }
+@keyframes bootblink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
