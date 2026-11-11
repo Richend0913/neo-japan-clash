@@ -49,7 +49,7 @@
   // 胴体の太い部分から事前に測った値で、ポーズを切り替えても体の位置が飛ばないようにする（武器やエフェクトの張り出しは無視）。
   const ART = {
     zanrai: [0.301, 0.467, 0.468, 0.46, 0.502], mikoto: [0.519, 0.444, 0.549, 0.579, 0.523], kagemaru: [0.366, 0.465, 0.446, 0.371, 0.518], gounen: [0.365, 0.407, 0.475, 0.44, 0.495],
-    konko: [0.517, 0.336, 0.398, 0.501, 0.487], raidenzan: [0.427, 0.411, 0.341, 0.454, 0.537], shuki: [0.452, 0.48, 0.587, 0.468, 0.514], shion: [0.445, 0.372, 0.48, 0.437, 0.493],
+    konko: [0.46, 0.336, 0.398, 0.473, 0.459], raidenzan: [0.427, 0.411, 0.341, 0.454, 0.537], shuki: [0.452, 0.48, 0.587, 0.468, 0.514], shion: [0.445, 0.372, 0.48, 0.437, 0.493],
     ougi: [0.532, 0.424, 0.483, 0.438, 0.555], nishiki: [0.244, 0.306, 0.43, 0.375, 0.515], kurotengu: [0.401, 0.489, 0.462, 0.409, 0.523], ryujin: [0.472, 0.468, 0.439, 0.489, 0.523],
     mumei: [0.445, 0.471, 0.517, 0.398, 0.417], kaguya: [0.492, 0.508, 0.578, 0.55, 0.463] };
   const POSES = ['atk', 'hit', 'grd', 'hev'];
@@ -274,7 +274,9 @@
 
   // ================= ファイター =================
   const UL = 28, LL = 30, TOR = 44, UA = 22, LA = 22, HR = 13;
-  const isHv = N.isHeavy, baseK = k => (k.length === 2 ? k[1] : k), varK = k => (k.length === 2 ? k[0] : ''); // 'dh' → 強 / ダッシュ
+  const isHv = N.isHeavy;
+  // 種別 → 基本（'l' 弱 / 'h' 強 / 's' 必殺）と、変種（'d' ダッシュ / 'a' 落下 / 'c' しゃがみ / 'f' 前進 / 'b' 後退 / '2' チェイン2段目 / 'x' フィニッシュ）
+  const baseK = k => (k === 'l2' ? 'l' : k === 'lf' ? 'h' : k.length === 2 ? k[1] : k), varK = k => (k === 'l2' ? '2' : k === 'lf' ? 'x' : k.length === 2 ? k[0] : '');
   const pt = (p, a, l) => ({ x: p.x + Math.sin(a) * l, y: p.y + Math.cos(a) * l });
   const BASE = { lean: 0.1, aF: [0.55, 1.9], aB: [0.25, 1.6], lF: [0.3, -0.05], lB: [-0.3, -0.3], w: 2.5 };
   const P = o => Object.assign({}, BASE, o);
@@ -316,6 +318,7 @@
           if (f.atk === 's' && m.spin) { const a = 1.57 + (t - m.su) * 0.9; p.aF = [a, a]; p.w = a; p.lean = 0.2; }
         } else p = mix(ps[1], BASE, Math.min(1, (t - m.su - m.ac) / m.rc));
         if (f.air) { p.lF = AIR_F; p.lB = AIR_B; }
+        else if (varK(f.atk) === 'c') { p.lF = CROUCH_F; p.lB = CROUCH_B; } // しゃがみ技
         return p;
       }
       default: return P({});
@@ -525,7 +528,8 @@
   // 斬撃の弧・ビーム・必殺技の溜めオーラ（ベクター／スプライト共通。向きを反転済みの座標系で呼ぶ）
   // geo: hx,hy=手元  cy=弧の中心の高さ  R=弧の半径  ay=オーラ中心の高さ  k=太さなどの倍率
   function drawAtkFx(c, f, m, g, alpha, geo) {
-    const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k, hv = isHv(f.atk), fall = !!m.fall;
+    const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k, hv = isHv(f.atk), fall = !!m.fall, vr = varK(f.atk);
+    const cy = vr === 'c' ? geo.cy * 0.7 : geo.cy; // しゃがみ技は弧の中心も低い
     const tail = hv ? 7 : 3; // 強の斬撃は長く残る
     if (t > m.su && t <= m.su + m.ac + tail && !(fall && !f.air)) {
       const u = fall ? 0.8 : 1 - (t - m.su) / (m.ac + tail + 1);
@@ -541,13 +545,25 @@
         let a0 = -0.5, a1 = 0.45;
         if (hv || ty === 'quake') { a0 = -1.45; a1 = 0.7; } else if (ty === 'upper') { a0 = -1.5; a1 = 0.7; } else if (ty) { a0 = -0.8; a1 = 0.7; }
         if (f.air || ty === 'dive') { a0 = -0.2; a1 = 1.3; }
+        else if (vr === 'c') { if (hv) { a0 = -0.3; a1 = 0.95; } else { a0 = 0.1; a1 = 0.85; } } // しゃがみ技：足元を払う低い弧
+        else if (vr === 'f') { a0 += 0.12; a1 += 0.18; } // 前進技：前へ突き出す
+        else if (vr === 'b') a0 -= 0.3; // 後退技：長く振り抜く
+        else if (vr === '2') { a0 = -0.28; a1 = 0.3; } // 2段目：小さい弧
         // 弱＝細く短い弧、強＝太く大きい二重の弧（発光はぼかしではなく、太い半透明の線を下に敷く）
-        const R = geo.R * (hv ? 1.14 : 1), lw = (ty ? 13 : hv ? 17 : 8) * k, a = alpha * Math.max(0, u);
+        const R = geo.R * (hv ? 1.14 : 1) * (vr === '2' ? 0.8 : vr === 'x' ? 1.1 : 1), lw = (ty ? 13 : hv ? 17 : 8) * k * (vr === '2' ? 0.75 : vr === 'x' ? 1.2 : 1), a = alpha * Math.max(0, u);
         c.lineCap = 'round'; c.strokeStyle = g;
-        c.globalAlpha = a * 0.26; c.lineWidth = lw * 2.3; c.beginPath(); c.arc(0, geo.cy, R, a0, a1); c.stroke();
-        c.globalAlpha = a; c.lineWidth = lw; c.beginPath(); c.arc(0, geo.cy, R, a0, a1); c.stroke();
-        if (hv) { c.globalAlpha = a * 0.55; c.lineWidth = lw * 0.5; c.beginPath(); c.arc(0, geo.cy, R - lw * 1.5, a0 + 0.25, a1 - 0.1); c.stroke(); c.globalAlpha = a; }
-        c.strokeStyle = '#fff'; c.lineWidth = (hv ? 4.5 : 2.5) * k; c.beginPath(); c.arc(0, geo.cy, R + 2, a0 + 0.1, a1 - 0.1); c.stroke();
+        c.globalAlpha = a * 0.26; c.lineWidth = lw * 2.3; c.beginPath(); c.arc(0, cy, R, a0, a1); c.stroke();
+        c.globalAlpha = a; c.lineWidth = lw; c.beginPath(); c.arc(0, cy, R, a0, a1); c.stroke();
+        if (hv) { c.globalAlpha = a * 0.55; c.lineWidth = lw * 0.5; c.beginPath(); c.arc(0, cy, R - lw * 1.5, a0 + 0.25, a1 - 0.1); c.stroke(); c.globalAlpha = a; }
+        c.strokeStyle = '#fff'; c.lineWidth = (hv ? 4.5 : 2.5) * k; c.beginPath(); c.arc(0, cy, R + 2, a0 + 0.1, a1 - 0.1); c.stroke();
+        if (vr === 'x') { // フィニッシュ：弧の先に十字の閃光
+          const q = Math.max(0, 1 - (t - m.su - 1) / 6), fx0 = R * 0.98, len = (70 + 50 * q) * k;
+          for (const [ang, w, col, al] of [[0.5, 9, g, 0.5], [0.5, 3.5, '#fff', 1], [-0.95, 7, g, 0.45], [-0.95, 2.5, '#fff', 0.9]]) {
+            c.globalAlpha = alpha * al * q; c.strokeStyle = col; c.lineWidth = w * k; c.beginPath();
+            c.moveTo(fx0 - Math.cos(ang) * len, cy - Math.sin(ang) * len); c.lineTo(fx0 + Math.cos(ang) * len, cy + Math.sin(ang) * len); c.stroke();
+          }
+          c.globalAlpha = alpha * 0.8 * q; c.fillStyle = '#fff'; c.beginPath(); c.arc(fx0, cy, 13 * k * (0.5 + q), 0, PI * 2); c.fill();
+        }
         c.lineCap = 'butt'; c.globalAlpha = alpha;
       }
     }
@@ -616,13 +632,21 @@
           else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = 16 * u * u; rot = lean * u; if (u > 0.6) ghost = 2; }
         } else {
           // 弱＝小さく速い。強＝大きく引いて（溜め）深く踏み込む。突進系の必殺技は sim 側が本体を動かすので、見た目の踏み込みは小さくする
-          const big = hv && !sp, lean = f.atk === 'l' ? 0.08 : big ? 0.2 : 0.15;
-          const reach = f.atk === 'l' ? 20 : big ? 44 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
-          const back = big ? 22 : 10, br = big ? 0.14 : 0.07, bs = big ? 0.09 : 0.05;
+          const big = hv && !sp, lt = !hv && !sp;
+          let lean = lt ? 0.08 : big ? 0.2 : 0.15;
+          let reach = lt ? 20 : big ? 44 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
+          let back = big ? 22 : 10, br = big ? 0.14 : 0.07; const bs = big ? 0.09 : 0.05;
+          // BRIEF5 の変種（絵は同じ。傾き・踏み込み・潰しで差を付ける）
+          if (vr === 'f') { lean *= 2.1; reach += 8; back = 0; br = big ? -0.14 : -0.1; ghost = 1; } // 前進技：発生前から前のめり（引かない）
+          else if (vr === 'b') { back += 12; br += 0.17; lean += 0.1; reach += 6; } // 後退技：発生中は大きく後ろに反り、打ち出しで前傾
+          else if (vr === '2') { lean = 0.05; reach = 12; back = 3; br = 0.02; } // 2段目：小さく速い
+          else if (vr === 'x') { lean = 0.27; reach = 54; back = 26; } // フィニッシュ：強より深く
           if (t <= m.su) { let u = t / m.su; if (big) u = u * u * (3 - 2 * u); dx = -back * u; rot = -br * u; sy = 1 - bs * u; sx = 1 + bs * 0.4 * u; if (big && t > m.su - 3) dx += (t % 2 ? 1.5 : -1.5); } // 予備動作：沈んで後ろに引く（強は深く、最後に震える）
           else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -back + (reach + back) * u; rot = -br + (lean + br) * u; if (m.adv) ghost = 2; }
           else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
           if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
+          if (vr === 'c') { const q = t <= end ? Math.min(1, t / 3) : 1 - Math.min(1, (t - end) / m.rc); sy *= 1 - 0.22 * q; sx *= 1 + 0.06 * q; rot *= 0.6; } // しゃがみ技：低く潰して打つ
+          if (vr === 'x' && t > m.su && t <= m.su + 2) white = 0.55; // フィニッシュの出際は白く光る
         }
         if (ty === 'warp' && t < m.su) alpha *= 0.25 + 0.3 * Math.abs(Math.sin(t));
         if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const zz = 1 + (hv ? 0.13 : 0.08) * (1 - (t - f.ht) / 6); sx *= zz; sy *= zz; } // ヒットの瞬間だけ拡大（強は大きく）
@@ -770,7 +794,7 @@
       case 'warp': sparks(e.x, e.y, '#3dff9a', 10, 5); break;
       case 'shot': fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 5, life: 8, col: CHARS[b.f[e.s].ci].col.g }); break;
       case 'dash': dust(e.x, 5, 2); break;
-      case 'sw': if (e.v === 1) dust(e.x, 4, 2.5); break; // ダッシュ攻撃の踏み切り
+      case 'sw': if (e.v === 1) dust(e.x, 4, 2.5); else if (e.m && e.m.length === 2 && (e.m[0] === 'f' || e.m[0] === 'b')) dust(e.x, 3, 1.6); break; // ダッシュ攻撃の踏み切り／前進技・後退技の足元
       case 'land': dust(e.x, e.h ? 10 : 6, e.h ? 4 : 2.8); fx.shake = Math.max(fx.shake, e.h ? 6 : 2.5); break; // 落下攻撃の着地
       case 'ko': fx.shake = 16; fx.flash = 6; break;
     }

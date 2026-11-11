@@ -9,7 +9,7 @@
   function newFighter(ci, side) {
     const c = CHARS[ci];
     return { ci, x: side ? 610 : 350, y: GY, vx: 0, vy: 0, face: side ? -1 : 1, hp: c.hp, meter: 30,
-      st: 'idle', t: 0, atk: '', air: 0, hn: 0, ht: -99, stun: 0, combo: 0, dcd: 0, inv: 0, wins: 0, pi: 0, cr: 0 };
+      st: 'idle', t: 0, atk: '', air: 0, hn: 0, ht: -99, stun: 0, combo: 0, dcd: 0, inv: 0, wins: 0, pi: 0, cr: 0, chainT: 0, lastKind: '' };
   }
   function newBattle(c0, c1) {
     return { f: [newFighter(c0, 0), newFighter(c1, 1)], p: [], timer: ROUND_FRAMES, round: 1,
@@ -23,9 +23,25 @@
     b.p = []; b.timer = ROUND_FRAMES; b.phase = 'intro'; b.pt = 0; b.rw = -1; b.tu = 0; b.stop = 0;
   }
   // 技データ。'l'=弱 'h'=強 's'=必殺。派生技（BRIEF4）: 'dl'/'dh'=ダッシュ攻撃、'al'/'ah'=空中の落下攻撃（弱・強のデータから作る）
-  const DERIVED = {};
+  // BRIEF5: 方向つき通常技 'cl'/'ch'=しゃがみ（↓）、'fl'/'fh'=前進（相手方向）、'bl'/'bh'=後退（逆方向）。チェイン 'l2'=2段目、'lf'=フィニッシュ
+  const DERIVED = {}, CHAIN = 28, CHAIN_LENIENCY = 6;
   function derive(c, k) {
-    const hv = k[1] === 'h', n = hv ? c.h : c.l;
+    const hv = k[1] === 'h' || k === 'lf', n = hv ? c.h : c.l;
+    switch (k) {
+      // しゃがみ技：低い位置を打つ（y0/y1 = 判定の下端・上端の高さ）。弱はリーチが長く硬直が短い、強は重いが発生が遅い
+      case 'cl': return Object.assign({}, n, { dmg: n.dmg * 0.9, rng: Math.round(n.rng * 1.15), rc: n.rc - 2, y0: 4, y1: 62, low: 1 });
+      case 'ch': return Object.assign({}, n, { dmg: n.dmg * 1.1, rng: Math.round(n.rng * 1.1), su: n.su + 2, y0: 4, y1: 62, low: 1 });
+      // 前進技：出した瞬間から有効フレームの終わりまで前に進み続ける（ダッシュ攻撃より遅い）
+      case 'fl': return Object.assign({}, n, { dmg: n.dmg * 1.1, rc: n.rc + 2, adv: 1.2 + c.spd * 0.3, step: 1 });
+      case 'fh': return Object.assign({}, n, { dmg: n.dmg * 1.05, rc: n.rc + 3, adv: 1.5 + c.spd * 0.35, step: 1 });
+      // 後退技：発生前のあいだ下がり（back = 速さ）、長いリーチで打つ。硬直が大きい
+      case 'bl': return Object.assign({}, n, { rng: Math.round(n.rng * 1.2), rc: n.rc + 4, back: 3 });
+      case 'bh': return Object.assign({}, n, { dmg: n.dmg * 1.15, rng: Math.round(n.rng * 1.2), rc: n.rc + 5, back: 3 });
+      // チェイン2段目：速く軽い。少し踏み込み、相手をあまり押さない（3段目が届くように）
+      case 'l2': return Object.assign({}, n, { su: Math.max(3, n.su - 2), dmg: n.dmg * 0.8, rc: n.rc - 2, adv: 3, kb: 3 });
+      // フィニッシュ：強ベース。大きく吹き飛ばし、ヒットストップが長い
+      case 'lf': return Object.assign({}, n, { su: n.su - 1, dmg: n.dmg * 1.15, kb: n.kb * 1.6, stopx: 3, adv: 3 });
+    }
     if (k[0] === 'd') // ダッシュ攻撃：前進しながら攻撃。踏み込み大・ダメージ中・硬直やや大
       return { su: n.su + (hv ? 0 : 2), ac: n.ac + 3, rc: n.rc + (hv ? 8 : 6), dmg: hv ? n.dmg : Math.round(n.dmg * 1.5), rng: n.rng + 8,
         adv: (hv ? 4.5 : 5.5) + c.spd * 0.6, hs: hv ? 24 : 19, kb: hv ? 10 : 7, heavy: hv ? 1 : 0, dash: 1 };
@@ -37,7 +53,8 @@
     if (k === 'l') return c.l; if (k === 'h') return c.h; if (k === 's' || !k) return c.sp;
     return DERIVED[c.id + k] || (DERIVED[c.id + k] = derive(c, k));
   }
-  const isHeavy = k => k === 'h' || k === 'dh' || k === 'ah'; // 強攻撃系（強・ダッシュ強・落下強）
+  const isHeavy = k => k === 'h' || k === 'lf' || (k.length === 2 && k[1] === 'h'); // 強攻撃系（強・ダッシュ強・落下強・しゃがみ強・前進強・後退強・フィニッシュ）
+  const chainStart = k => k === 'l' || k === 'cl' || k === 'fl'; // チェインの起点になれる弱攻撃
   function setSt(f, s) { if (f.st !== s) { f.st = s; f.t = 0; } }
   function hurt(f) {
     const c = CHARS[f.ci], sc = c.b.sc || 1;
@@ -55,19 +72,26 @@
       const chip = Math.max(1, Math.round(m.dmg * ca.pow * 0.12));
       d.hp = Math.max(1, d.hp - chip);
       d.st = 'block'; d.t = 0; d.stun = m.heavy ? 16 : 11; d.vx = dir * (m.kb || 4) * 0.7;
+      d.chainT = 0; if (!proj) a.chainT = 0; // ガードした側・された側ともチェイン窓は消える
       d.meter = Math.min(100, d.meter + 3);
       b.ev.push({ k: 'block', x: px, y: py }); b.stop = 3;
     } else {
       d.combo = d.st === 'hit' ? d.combo + 1 : 1;
       const scale = Math.max(0.4, 1 - 0.12 * (d.combo - 1));
       const dmg = Math.max(1, Math.round(m.dmg * ca.pow * scale));
-      d.hp -= dmg; d.st = 'hit'; d.t = 0; d.cr = 0; d.atk = ''; d.air = 0;
+      d.hp -= dmg; d.st = 'hit'; d.t = 0; d.cr = 0; d.atk = ''; d.air = 0; d.chainT = 0; // 被弾でチェイン窓は消える
       d.stun = m.hs || 15; d.vx = dir * (m.kb || 4);
+      // チェイン：弱系がコンボの1発目として当たる／2段目が当たると、攻撃側に窓が開く。
+      // 次の段（idle に戻ってすぐ押した場合＋猶予 CHAIN_LENIENCY フレーム）が連続ヒットになるだけ、のけぞりを延ばす
+      if (!proj && ((chainStart(a.atk) && d.combo === 1) || a.atk === 'l2')) {
+        a.chainT = CHAIN; a.lastKind = a.atk;
+        d.stun = Math.max(d.stun, m.ac + m.rc + mv(ca, a.atk === 'l2' ? 'lf' : 'l2').su + 1 + CHAIN_LENIENCY);
+      }
       if (m.launch) { d.vy = -m.launch; d.y = Math.min(d.y, GY - 1); d.stun = Math.max(d.stun, 34); }
       else if (d.y < GY) d.vy = -5;
       a.meter = Math.min(100, a.meter + dmg * 1.1); d.meter = Math.min(100, d.meter + dmg * 0.7);
       b.ev.push({ k: 'hit', x: px, y: py, h: (m.heavy || m.launch) ? 1 : 0, sp: m.sp ? 1 : 0, c: d.combo, s: ai, d: dmg });
-      b.stop = m.heavy ? 9 : 4; // ヒットストップ：強は弱の2倍以上
+      b.stop = (m.heavy ? 9 : 4) + (m.stopx || 0); // ヒットストップ：強は弱の2倍以上（フィニッシュはさらに +3）
       if (d.hp <= 0) { d.hp = 0; d.st = 'ko'; d.t = 0; d.vy = -9; d.vx = dir * 6; d.y = Math.min(d.y, GY - 1); }
     }
     if (!proj && a.y >= GY && (d.x <= XL + 2 || d.x >= XR - 2)) a.vx = -dir * (m.kb || 4) * 0.8;
@@ -76,10 +100,10 @@
 
   function startAtk(b, i, k) {
     const f = b.f[i];
-    f.st = 'atk'; f.t = 0; f.atk = k; f.hn = 0; f.ht = -99; f.air = f.y < GY ? 1 : 0; f.cr = 0;
+    f.st = 'atk'; f.t = 0; f.atk = k; f.hn = 0; f.ht = -99; f.air = f.y < GY ? 1 : 0; f.cr = 0; f.chainT = 0; // 何か技を出したら窓は閉じる
     if (f.air) { const o = b.f[1 - i]; if (o.x !== f.x) f.face = o.x > f.x ? 1 : -1; } // 落下攻撃は相手の方へ向き直る
     if (k === 's') b.ev.push({ k: 'sp', x: f.x, y: f.y - 70, s: i });
-    else b.ev.push({ k: 'sw', h: isHeavy(k) ? 1 : 0, v: k[0] === 'd' ? 1 : k[0] === 'a' ? 2 : 0, x: f.x, y: f.y, s: i });
+    else b.ev.push({ k: 'sw', h: isHeavy(k) ? 1 : 0, v: k[0] === 'd' ? 1 : k[0] === 'a' ? 2 : 0, m: k, x: f.x, y: f.y, s: i });
   }
 
   function spawnProj(b, i, f, m) {
@@ -103,7 +127,8 @@
         if (t === m.su) { f.vy = m.jump; f.vx = f.face * 3; }
         if (t < m.su + 4) f.inv = 2; else if (gnd) f.vx *= 0.7;
       } else if (gnd) {
-        if (m.dash) { if (t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7; } // ダッシュ攻撃：発生前から前進し続ける
+        if (m.dash || m.step) { if (t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7; } // ダッシュ攻撃・前進技：発生前から前進し続ける
+        else if (m.back && t <= m.su) f.vx = -f.face * m.back; // 後退技：発生前のあいだ下がる
         else if (m.adv && t > m.su - 2 && t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7;
       }
       if (ty === 'warp' && t === m.su - 1) {
@@ -139,6 +164,7 @@
     const f = b.f[i], o = b.f[1 - i], c = CHARS[f.ci];
     const pr = inp & ~f.pi; f.pi = inp; f.t++;
     if (f.dcd > 0) f.dcd--;
+    if (f.chainT > 0) f.chainT--;
     if (f.inv > 0) f.inv--;
     const gnd = f.y >= GY;
     if (f.st === 'hit' || f.st === 'block') {
@@ -157,8 +183,13 @@
       if (f.x !== o.x) f.face = o.x > f.x ? 1 : -1;
       f.cr = 0;
       if ((pr & K.S) && f.meter >= COST) { f.meter -= COST; startAtk(b, i, 's'); }
-      else if (pr & K.A) startAtk(b, i, 'l');
-      else if (pr & K.H) startAtk(b, i, 'h');
+      else if (pr & (K.A | K.H)) {
+        // チェイン窓が開いていれば 弱→2段目（l 系のあと）、強→フィニッシュ（2段目のあと）。それ以外は押した瞬間の方向で種別を決める
+        const lt = pr & K.A, fwd = f.face > 0 ? K.R : K.L, bwd = f.face > 0 ? K.L : K.R;
+        if (f.chainT > 0 && lt && chainStart(f.lastKind)) startAtk(b, i, 'l2');
+        else if (f.chainT > 0 && !lt && f.lastKind === 'l2') startAtk(b, i, 'lf');
+        else startAtk(b, i, ((inp & K.D) ? 'c' : (inp & fwd) ? 'f' : (inp & bwd) ? 'b' : '') + (lt ? 'l' : 'h'));
+      }
       else if (inp & K.G) { setSt(f, 'guard'); f.vx = 0; f.cr = (inp & K.D) ? 1 : 0; }
       else if ((pr & (K.DL | K.DR)) && !f.dcd) {
         f.st = 'dash'; f.t = 0; f.vx = ((pr & K.DL) ? -1 : 1) * (6 + c.spd * 1.2); f.dcd = 28;
@@ -251,7 +282,8 @@
 
   // ---- CPU AI ----
   const AI_T = { react: [26, 20, 14, 9, 5], aggr: [0.35, 0.5, 0.65, 0.8, 0.92], guard: [0.1, 0.25, 0.45, 0.65, 0.85], sp: [0.2, 0.35, 0.5, 0.7, 0.9] };
-  function newAI(lv) { return { lv: Math.max(1, Math.min(5, lv)), cd: 20, held: 0, mt: -99 }; }
+  const AI_CHAIN = [0.2, 0.33, 0.45, 0.55, 0.65]; // l 系を当てたあとチェインを狙う確率（Lv1〜5）。2段目→フィニッシュも同じ確率でもう一度判定
+  function newAI(lv) { return { lv: Math.max(1, Math.min(5, lv)), cd: 20, held: 0, mt: -99, cw: 0 }; }
   function aiInput(b, i, ai) {
     if (b.phase !== 'fight') return 0;
     const n = ai.lv - 1, f = b.f[i], o = b.f[1 - i], c = CHARS[f.ci], oc = CHARS[o.ci];
@@ -266,6 +298,11 @@
         ai.mt = b.frame; if (R() < AI_T.aggr[n] * 0.75) return (R() < 0.6 ? K.A : K.H);
       }
     }
+    // チェイン：窓が開いた時に1度だけ狙うか決め、idle に戻った最初のフレームで押す（反応待ち cd とは別枠）
+    if (f.chainT > 0) {
+      if (!ai.cw) ai.cw = R() < AI_CHAIN[n] ? 1 : 2;
+      if (ai.cw === 1 && (f.st === 'idle' || f.st === 'walk' || f.st === 'crouch')) { ai.cw = 2; ai.cd = Math.max(ai.cd, 4); return f.lastKind === 'l2' ? K.H : K.A; }
+    } else ai.cw = 0;
     if (ai.cd > 0) { ai.cd--; return ai.held; }
     let threat = o.st === 'atk' && o.atk && d < Math.min(mv(oc, o.atk).rng, 400) + 45;
     for (const p of b.p) if (p.o !== i && Math.abs(p.x - f.x) < 170 && (p.vx > 0) === (f.x > p.x)) threat = true;
@@ -284,10 +321,10 @@
     if (spOk && R() < AI_T.sp[n] * 0.45) tap = K.S;
     else if (d < c.l.rng + 8) {
       const q = R();
-      if (q < AI_T.aggr[n]) tap = R() < 0.6 ? K.A : K.H;
+      if (q < AI_T.aggr[n]) { tap = R() < 0.6 ? K.A : K.H; const z = R(); tap |= z < 0.13 ? K.D : z < 0.2 ? away : (z < 0.55 && d > c.l.rng * 0.55) ? toward : 0; } // たまにしゃがみ技・後退技、間合いが遠めなら前進技
       else if (q < AI_T.aggr[n] + 0.12) held = away;
       else held = K.G;
-    } else if (d < c.h.rng + 12 && R() < AI_T.aggr[n] * 0.7) tap = K.H;
+    } else if (d < c.h.rng + 12 && R() < AI_T.aggr[n] * 0.7) { const z = R(); tap = K.H | (z < 0.1 ? K.D : z < 0.18 ? away : z < 0.6 ? toward : 0); }
     else {
       const q = R();
       if (q < AI_T.aggr[n] + 0.12) {
@@ -300,6 +337,6 @@
     return held | tap;
   }
 
-  const api = { K, GY, XL, XR, COST, WINS, newBattle, step, mv, isHeavy, hurt, newAI, aiInput };
+  const api = { K, GY, XL, XR, COST, WINS, CHAIN, newBattle, step, mv, isHeavy, hurt, newAI, aiInput };
   if (NODE) module.exports = api; else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);
