@@ -11,24 +11,35 @@
   let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 
   // ================= 画像アセット =================
-  // スプライト素材（assets/sprites/<id>.png と assets/portraits/<id>.png）があるキャラの一覧。素材を追加したらここに id を足す。
+  // スプライト素材（assets/sprites/<id>.webp と assets/portraits/<id>.webp）があるキャラの一覧。素材を追加したらここに id を足す。
   // 一覧に無いキャラは読み込みを試みず、ベクター描画のままになる（存在しない画像への 404 を出さないため）。
   // 体の中心（立ち位置の基準）は画像の不透明部分の重心から自動で決める。ずれるキャラは { ax: 0〜1 } で上書きできる。
-  const ART = { zanrai: {}, mikoto: {}, kagemaru: {}, gounen: {}, konko: {}, raidenzan: {}, shuki: {}, shion: {}, ougi: {}, nishiki: {}, kurotengu: {} };
+  // ポーズ絵は <id>_atk（攻撃）/ <id>_hit（被弾・ダウン）/ <id>_grd（ガード）。値は [待機, 攻撃, 被弾, ガード] の体の中心の横位置（0〜1）。
+  // 胴体の太い部分から事前に測った値で、ポーズを切り替えても体の位置が飛ばないようにする（武器やエフェクトの張り出しは無視）。
+  const ART = {
+    zanrai: [0.301, 0.467, 0.468, 0.46], mikoto: [0.519, 0.444, 0.549, 0.579], kagemaru: [0.366, 0.465, 0.446, 0.371], gounen: [0.365, 0.407, 0.504, 0.44],
+    konko: [0.517, 0.336, 0.398, 0.501], raidenzan: [0.427, 0.411, 0.341, 0.454], shuki: [0.452, 0.48, 0.587, 0.468], shion: [0.445, 0.372, 0.48, 0.437],
+    ougi: [0.532, 0.424, 0.483, 0.438], nishiki: [0.244, 0.306, 0.43, 0.375], kurotengu: [0.401, 0.489, 0.462, 0.409], ryujin: [0.472, 0.468, 0.439, 0.489],
+    mumei: [0.397, 0.471, 0.483, 0.398], kaguya: [0.492, 0.508, 0.578, 0.55] };
+  const POSES = ['atk', 'hit', 'grd'];
   const IMG = {};
-  function load(key, src) { // 相対パス（GitHub Pages のサブパス配下でも動く）
+  function load(key, src, ax) { // 相対パス（GitHub Pages のサブパス配下でも動く）
     const im = new Image(), e = IMG[key] = { im, ok: false, bad: false, tint: {} };
+    if (ax != null) e.ax = ax;
     im.onload = () => { e.ok = im.naturalWidth > 0; }; im.onerror = () => { e.bad = true; };
     im.src = src; return e;
   }
   load('stage', 'assets/stage.webp');
-  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.webp`); load('p:' + id, `assets/portraits/${id}.webp`); }
+  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.webp`, ART[id][0]); load('p:' + id, `assets/portraits/${id}.webp`); }
+  // ポーズ絵は待機絵・ポートレートの後に読み込む（先に届いた待機絵だけでも遊べる）
+  for (const id in ART) POSES.forEach((ps, n) => load('s:' + id + ':' + ps, `assets/sprites/${id}_${ps}.webp`, ART[id][n + 1]));
   const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
   const spriteOf = ci => ready('s:' + CHARS[ci].id), portraitOf = ci => ready('p:' + CHARS[ci].id);
+  const poseOf = (ci, ps) => ready('s:' + CHARS[ci].id + ':' + ps);
   // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
   function anchorX(e, id) {
     if (e.ax != null) return e.ax;
-    let ax = ART[id].ax;
+    let ax = null;
     if (ax == null) {
       ax = 0.45;
       try {
@@ -51,7 +62,7 @@
     return e.tint[col];
   }
   const clamp01 = v => Math.max(0, Math.min(1, v));
-  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), portraits: Object.keys(ART).filter(id => ready('p:' + id)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
+  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
 
   // ================= ステージ =================
   let stageCv = null;
@@ -474,28 +485,43 @@
   }
 
   // ---- スプライト描画（1枚絵 + 手続きアニメーション。動きは sim の状態だけから決める） ----
-  // 表示の高さは体格 b.sc に比例（sc 0.9→250px 〜 1.15→340px）
-  const spriteH = ch => Math.max(250, Math.min(340, 250 + ((ch.b.sc || 1) - 0.9) / 0.25 * 90));
-  function drawSprite(c, f, o, e) {
-    const ch = CHARS[f.ci], im = e.im, t = f.t, st = f.st, g = ch.col.g;
-    const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
+  // 表示の高さは体格 b.sc に比例（sc 0.9→200px 〜 1.15→270px。BRIEF3 で従来の8割に縮小。当たり判定は変えていない）
+  const spriteH = ch => Math.max(200, Math.min(270, 200 + ((ch.b.sc || 1) - 0.9) / 0.25 * 70));
+  // 攻撃ポーズを出す区間：有効フレーム（active）＋硬直の頭 ATK_HOLD フレームまで（active だけだと弱攻撃で3フレームしか見えない）
+  const atkHold = m => Math.min(6, Math.round(m.rc * 0.4));
+  // sim の状態から使うポーズを選ぶ（'' = 待機絵）
+  function poseKind(f, m) {
+    switch (f.st) {
+      case 'atk': return f.t > m.su && f.t <= m.su + m.ac + atkHold(m) ? 'atk' : '';
+      case 'hit': case 'ko': return 'hit';
+      case 'guard': case 'block': return 'grd';
+      default: return '';
+    }
+  }
+  function drawSprite(c, f, o, idle) {
+    const ch = CHARS[f.ci], t = f.t, st = f.st, g = ch.col.g;
     const m = st === 'atk' ? N.mv(ch, f.atk) : null, ty = m && f.atk === 's' ? m.type : '';
+    const kind = o.win ? '' : poseKind(f, m), pe = kind ? poseOf(f.ci, kind) : null; // ポーズ絵が未ロードなら待機絵
+    const e = pe || idle, im = e.im;
+    // 高さを待機絵と同じ H に揃える（攻撃絵は武器ぶん横に広いだけで、体の大きさは変わらない）
+    const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
     const fw = (f.vx >= 0 ? 1 : -1) === f.face; // 前進中か
     // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数
     let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, alpha = o.alpha == null ? 1 : o.alpha;
     switch (st) {
-      case 'walk': rot = fw ? 0.06 : -0.045; dy = -Math.abs(Math.sin(t * 0.3)) * 5; break;
+      case 'walk': rot = fw ? 0.045 : -0.035; dy = -Math.abs(Math.sin(t * Math.abs(f.vx) * 0.07)) * 3; break; // 上下動は移動速度に同期
       case 'dash': rot = fw ? 0.2 : -0.14; dy = -3; ghost = 3; break;
       case 'jump': py = H * 0.5; rot = Math.max(-0.22, Math.min(0.22, f.vy * 0.011 + f.vx * f.face * 0.012)); break;
       case 'crouch': sy = 0.74; sx = 1.05; break;
-      case 'guard': case 'block': sy = f.cr ? 0.72 : 0.93; sx = f.cr ? 1.05 : 1.01; rot = -0.04; if (st === 'block') dx = -6 * Math.max(0, 1 - t / 8); break;
-      case 'hit': { const u = Math.max(0, 1 - t / 16); rot = -0.1 - 0.24 * u; dx = -8 * u; white = t < 9 && (t >> 1) % 2 === 0 ? 0.9 : 0; break; }
+      case 'guard': case 'block': // ガード絵があれば絵に任せ、無ければ従来の沈み込み
+        sy = f.cr ? 0.74 : pe ? 1 : 0.93; sx = f.cr ? 1.05 : pe ? 1 : 1.01; rot = pe ? 0 : -0.04; if (st === 'block') dx = -6 * Math.max(0, 1 - t / 8); break;
+      case 'hit': { const u = Math.max(0, 1 - t / 16); rot = pe ? -0.03 - 0.1 * u : -0.1 - 0.24 * u; dx = -8 * u; white = t < 9 && (t >> 1) % 2 === 0 ? 0.9 : 0; break; }
       case 'ko': { const u = Math.min(1, t / 16); rot = -u * PI / 2; dy = -ax * u; white = t < 6 && t % 2 === 0 ? 0.9 : 0; alpha *= 1 - 0.5 * clamp01((t - 30) / 40); break; }
       case 'atk': {
         const end = m.su + m.ac, lean = f.atk === 'l' ? 0.08 : 0.15;
         // 突進系の必殺技は sim 側が本体を動かすので、見た目の踏み込みは小さくする
         const reach = f.atk === 'l' ? 20 : f.atk === 'h' ? 32 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
-        if (t <= m.su) { const u = t / m.su; dx = -10 * u; rot = -0.07 * u; }
+        if (t <= m.su) { const u = t / m.su; dx = -10 * u; rot = -0.07 * u; sy = 1 - 0.05 * u; sx = 1 + 0.02 * u; } // 予備動作：少し沈んで後ろに引く
         else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -10 + (reach + 10) * u; rot = -0.07 + (lean + 0.07) * u; if (m.adv) ghost = 2; }
         else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
         if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
@@ -503,8 +529,9 @@
         if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const z = 1 + 0.08 * (1 - (t - f.ht) / 6); sx *= z; sy *= z; } // ヒットの瞬間だけ拡大
         break;
       }
-      default: { const b = Math.sin(t * 0.09); dy = b * 2.5; sy = 1 + b * 0.012; } // 待機：呼吸
+      default: { const b = Math.sin(t * 0.08); sy = 1 + b * 0.009; sx = 1 - b * 0.004; } // 待機：呼吸（足は地面に付けたまま、ごく小さく伸び縮み）
     }
+    if (o.land && st !== 'ko' && st !== 'hit') { sy *= 1 - 0.06 * o.land; sx *= 1 + 0.03 * o.land; } // 着地の瞬間だけ縦に潰れる
     if (o.win) dy = -Math.abs(Math.sin(t * 0.14)) * 12;
     if (ch.b.holo) alpha *= 0.86 + 0.1 * Math.sin(t * 0.3);
     c.save(); c.translate(f.x, f.y); c.scale(f.face, 1); // 原画は右向き。左向きは水平反転
@@ -683,15 +710,25 @@
     c.restore();
   }
 
+  const landMem = [{ y: GY, at: -99, frame: 0 }, { y: GY, at: -99, frame: 0 }];
   function drawBattle(c, b, view, T) {
     const sx = fx.shake ? (Math.random() - 0.5) * fx.shake * 2 : 0, sy = fx.shake ? (Math.random() - 0.5) * fx.shake : 0;
     c.save(); c.translate(sx, sy);
     drawStage(c, T, 0);
     drawShadow(c, b.f[0]); drawShadow(c, b.f[1]);
+    // 着地の検出（描画側だけで持つ。sim には触らない）：空中→接地に変わったフレームから2フレーム強く、3フレーム目は弱く潰す
+    const land = [0, 0];
+    for (let i = 0; i < 2; i++) {
+      const f = b.f[i], mem = landMem[i];
+      if (b.frame < mem.frame) mem.at = -99;
+      if (mem.y < GY && f.y >= GY && b.frame > mem.frame) mem.at = b.frame;
+      mem.y = f.y; mem.frame = b.frame;
+      const d = b.frame - mem.at; land[i] = d <= 1 ? 1 : d === 2 ? 0.5 : 0;
+    }
     // 攻撃中の側を手前に描く
     const front = b.f[1].st === 'atk' ? 1 : 0;
-    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front });
-    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front });
+    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front] });
+    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front] });
     for (const p of b.p) drawProj(c, p, b);
     drawFx(c); drawPetals(c, T);
     c.restore();
@@ -731,5 +768,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, poseKind, fxEvent, fxTick, fxClear, fx };
 })();

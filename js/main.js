@@ -81,7 +81,7 @@
       update(m, pr) { demo[0].t++; demo[1].t++; menuUpdate(pr); },
       draw() {
         D.drawStage(ctx, T, 0.4);
-        for (const f of demo) { ctx.save(); ctx.translate(f.x, f.y); const k = D.hasSprite(f.ci) ? 1.05 : 1.5; ctx.scale(k, k); D.drawFighter(ctx, Object.assign({}, f, { x: 0, y: 0 })); ctx.restore(); }
+        for (const f of demo) { ctx.save(); ctx.translate(f.x, f.y); const k = D.hasSprite(f.ci) ? 1.3 : 1.5; ctx.scale(k, k); D.drawFighter(ctx, Object.assign({}, f, { x: 0, y: 0 })); ctx.restore(); }
         D.drawPetals(ctx, T);
         ctx.save(); ctx.translate(480, 0); ctx.rotate(-0.03);
         D.neonText(ctx, 'NEO JAPAN', 0, 92, 70, '#ff4fa8'); D.neonText(ctx, 'CLASH', 0, 162, 86, '#49d0ff');
