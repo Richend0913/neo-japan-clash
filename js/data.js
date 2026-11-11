@@ -3,7 +3,8 @@
   'use strict';
   // 弱攻撃 / 強攻撃のフレームデータ生成
   const L = (rng, dmg, su, ac, rc) => ({ su: su || 5, ac: ac || 3, rc: rc || 9, dmg: dmg || 5, rng, hs: 15, kb: 4 });
-  const H = (rng, dmg, su, ac, rc) => ({ su: su || 11, ac: ac || 4, rc: rc || 18, dmg: dmg || 11, rng, hs: 23, kb: 8, heavy: 1 });
+  // 強は溜め（発生前）を弱より長く取る：BRIEF4 で各キャラ +2 フレーム
+  const H = (rng, dmg, su, ac, rc) => ({ su: (su || 11) + 2, ac: ac || 4, rc: rc || 18, dmg: dmg || 11, rng, hs: 23, kb: 8, heavy: 1 });
 
   // col: m=メイン a=サブ(暗) g=発光 s=肌   b: 体格・シルエット指定
   const CHARS = [

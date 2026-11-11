@@ -2,14 +2,20 @@
 (function () {
   'use strict';
   const N = window.NJC, CHARS = N.CHARS, K = N.K, INITIAL = N.INITIAL, D = N.Draw, A = N.Audio, I = N.Input, Net = N.Net;
-  const cv = document.getElementById('game'), ctx = cv.getContext('2d');
+  const cv = document.getElementById('game'), ctx = cv.getContext('2d', { alpha: false }); // 不透明キャンバス（合成が軽い）
   const W = 960, H = 540, PI = Math.PI;
   let ratio = 1;
+  const MAX_RATIO = 1.75;
+  let maxR = MAX_RATIO; // 遅い端末では試合中に自動で下げる（下の「自動解像度」）
   function fit() {
     const vw = innerWidth, vh = innerHeight, s = Math.min(vw / W, vh / H);
     cv.style.width = Math.floor(W * s) + 'px'; cv.style.height = Math.floor(H * s) + 'px';
-    ratio = Math.min(2, Math.max(1, s * (devicePixelRatio || 1)));
-    cv.width = Math.round(W * ratio); cv.height = Math.round(H * ratio);
+    // 内部解像度：表示サイズ × DPR。ただし上限は 1.75 倍（1680x945）。DPR 3 の端末で 2 倍（1920x1080）まで描くと塗る画素が3割増えて重い。
+    // 幅を 16 の倍数にして、倍率・高さが端数にならないようにする（キャッシュした背景や文字を等倍で貼るため）
+    const cw = Math.round(W * Math.max(1, Math.min(maxR, s * (devicePixelRatio || 1))) / 16) * 16, ch = cw * 9 / 16;
+    ratio = cw / W;
+    if (cv.width !== cw || cv.height !== ch) { cv.width = cw; cv.height = ch; }
+    D.setScale(ratio, cw, ch);
     document.body.classList.toggle('portrait', vh > vw);
   }
   addEventListener('resize', fit); addEventListener('orientationchange', () => setTimeout(fit, 200)); fit();
@@ -36,8 +42,8 @@
     btns.forEach((b, i) => {
       const f = i === focus, col = f ? '#ffd447' : (b.col || '#5fe0ff');
       ctx.fillStyle = f ? 'rgba(90,60,10,.88)' : 'rgba(10,4,30,.82)'; rr(b.x, b.y, b.w, b.h, 8); ctx.fill();
-      if (f) D.glow(ctx, '#ffd447', 14);
-      ctx.strokeStyle = col; ctx.lineWidth = f ? 3 : 2; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke(); D.noGlow(ctx);
+      if (f) { ctx.strokeStyle = '#ffd447'; ctx.globalAlpha = 0.22; ctx.lineWidth = 11; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke(); ctx.globalAlpha = 1; } // フォーカスの発光（ぼかし無し）
+      ctx.strokeStyle = col; ctx.lineWidth = f ? 3 : 2; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke();
       D.text(ctx, b.label, b.x + b.w / 2, b.y + b.h / 2 + 1, b.size || 19, f ? '#fff6c8' : '#fff', 'center');
     });
   }
@@ -66,8 +72,15 @@
   function bg(dim) { D.drawStage(ctx, T, dim == null ? 0.55 : dim); D.drawPetals(ctx, T); }
 
   // ---- 効果音つきイベント処理 ----
-  const SND = { block: 'block', sp: 'special', sw: 'swing', shot: 'shot', warp: 'warp', dash: 'dash', go: 'go', ko: 'ko', timeup: 'ko', over: 'win' };
-  function fxAndSound(e, b) { D.fxEvent(e, b); A.play(e.k === 'hit' ? (e.h ? 'heavy' : 'hit') : SND[e.k]); }
+  const SND = { block: 'block', sp: 'special', shot: 'shot', warp: 'warp', dash: 'dash', go: 'go', ko: 'ko', timeup: 'ko', over: 'win' };
+  function fxAndSound(e, b) {
+    D.fxEvent(e, b);
+    // 弱＝高く軽い音、強＝低く太い音。ダッシュ攻撃・落下攻撃は踏み切り音を足す
+    if (e.k === 'hit') A.play(e.h ? 'heavy' : 'hit');
+    else if (e.k === 'sw') { A.play(e.h ? 'swingH' : 'swing'); if (e.v) A.play('rush'); }
+    else if (e.k === 'land') A.play(e.h ? 'landH' : 'land');
+    else A.play(SND[e.k]);
+  }
 
   // ================= タイトル =================
   function toTitle() { Net.close(); go(Title()); }
@@ -81,7 +94,7 @@
       update(m, pr) { demo[0].t++; demo[1].t++; menuUpdate(pr); },
       draw() {
         D.drawStage(ctx, T, 0.4);
-        for (const f of demo) { ctx.save(); ctx.translate(f.x, f.y); const k = D.hasSprite(f.ci) ? 1.3 : 1.5; ctx.scale(k, k); D.drawFighter(ctx, Object.assign({}, f, { x: 0, y: 0 })); ctx.restore(); }
+        for (const f of demo) { ctx.save(); ctx.translate(f.x, f.y); const k = D.hasSprite(f.ci) ? 1.3 : 1.5; ctx.scale(k, k); D.drawFighter(ctx, Object.assign({}, f, { x: 0, y: 0 }), { zoom: k }); ctx.restore(); }
         D.drawPetals(ctx, T);
         ctx.save(); ctx.translate(480, 0); ctx.rotate(-0.03);
         D.neonText(ctx, 'NEO JAPAN', 0, 92, 70, '#ff4fa8'); D.neonText(ctx, 'CLASH', 0, 162, 86, '#49d0ff');
@@ -143,7 +156,7 @@
         const c = CHARS[cur], open = isUnlocked(cur), px = 196, py = 324, pw = 568;
         panel(px, py, pw, 160, open ? c.col.g : '#8d86b3');
         if (open) {
-          D.text(ctx, c.name, px + 16, py + 24, 28, '#fff'); D.text(ctx, c.en, px + 20 + ctx.measureText(c.name).width + 10, py + 28, 14, c.col.g, 'left', true);
+          D.text(ctx, c.name, px + 16, py + 24, 28, '#fff'); ctx.font = D.font(28); D.text(ctx, c.en, px + 20 + ctx.measureText(c.name).width + 10, py + 28, 14, c.col.g, 'left', true);
           D.text(ctx, c.title + ' ／ ' + c.type, px + 16, py + 52, 14, '#ffe9a8');
           const st = N.stats(c), rows = [['HP', st.hp, '#ff5d6c'], ['速度', st.spd, '#4dffb4'], ['威力', st.pow, '#ffd447']];
           rows.forEach((r, k) => {
@@ -178,7 +191,7 @@
     let t = 0; setBtns([]); A.play('special'); D.preloadFighter(c0); D.preloadFighter(c1);
     return {
       kind: 'vs',
-      update(m, pr) { t++; if (t > 120 || (t > 20 && (pr & (K.A | I.OK)))) next(); },
+      update(m, pr) { t++; if (D.warmFighter(c0)) D.warmFighter(c1); if (t > 120 || (t > 20 && (pr & (K.A | I.OK)))) next(); },
       tap() { if (t > 20) next(); return true; },
       draw() {
         bg(0.66); header(label);
@@ -209,6 +222,7 @@
       update(m, pr) {
         if (pr & I.BACK) { s.menu(); return; }
         if (paused) { menuUpdate(pr & ~I.BACK); return; }
+        if (b.phase === 'intro' && D.warmFighter(o.c0)) D.warmFighter(o.c1);
         N.step(b, m & 1023, N.aiInput(b, 1, ai));
         for (const e of b.ev) fxAndSound(e, b);
         b.ev.length = 0; D.fxTick();
@@ -372,6 +386,7 @@
     on.match = m; on.role = m.a === Net.id ? 'a' : m.b === Net.id ? 'b' : 's';
     on.b = N.newBattle(m.ca, m.cb); on.got = !m.late || on.role === 'a'; on.remote = 0; on.pending = []; on.end = null; on.sent = false; on.newUnlock = false;
     on.view = { ghost: [], labels: [nameOf(m.a), nameOf(m.b)] };
+    D.preloadFighter(m.ca); D.preloadFighter(m.cb);
     D.fxClear(); go(OBattle());
   }
   function OBattle() {
@@ -384,6 +399,7 @@
       },
       update(m, pr) {
         const b = on.b, inp = asking ? 0 : (m & 1023);
+        if (b.phase === 'intro' && D.warmFighter(b.f[0].ci)) D.warmFighter(b.f[1].ci);
         if (!on.end) {
           if (on.role === 'a') {
             // 対戦者A：シミュレーションを進め、状態スナップショットを配信する
@@ -457,6 +473,14 @@
     scr.update(m, pr);
     if (toast && --toast.life <= 0) toast = null;
   }
+  // ---- FPS 統計（直近120フレームの平均と最低）。F キーまたは URL に ?fps で画面にも出す ----
+  const FPS_N = 120, dts = new Float32Array(FPS_N); let dtI = 0, dtN = 0, showFps = /[?&]fps\b/.test(location.search), fpsStr = '', dropped = 0;
+  function fpsStats() {
+    if (!dtN) return { n: 0, avg: 0, min: 0, dropped };
+    let sum = 0, mx = 0; for (let i = 0; i < dtN; i++) { sum += dts[i]; if (dts[i] > mx) mx = dts[i]; }
+    return { n: dtN, avg: 1000 / (sum / dtN), min: 1000 / mx, dropped };
+  }
+  I.onFps = () => { showFps = !showFps; };
   function render() {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     scr.draw();
@@ -464,21 +488,55 @@
       ctx.font = D.font(15); const w = Math.min(900, ctx.measureText(toast.str).width + 40);
       ctx.globalAlpha = Math.min(1, toast.life / 20); panel(480 - w / 2, 232, w, 40, '#ffd447', 0.92); D.text(ctx, toast.str, 480, 253, 15, '#fff', 'center'); ctx.globalAlpha = 1;
     }
+    if (showFps) {
+      if (T % 20 === 0 || !fpsStr) { const f = fpsStats(); fpsStr = `FPS avg ${f.avg.toFixed(1)} / min ${f.min.toFixed(1)}  (${cv.width}x${cv.height})`; }
+      ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(330, 76, 300, 18); ctx.font = '12px monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillStyle = '#7dff9a'; ctx.fillText(fpsStr, 480, 85);
+    }
+  }
+  // 固定タイムステップ（60 回/秒）。
+  // ・60Hz 表示では rAF の時刻が ±数ms 揺れるので、そのまま足すと「0ステップの次に2ステップ」が混ざって動きがガタつく。
+  //   16.7ms 前後の間隔はちょうど1ステップとして扱う。
+  // ・遅れても 1フレームに進めるのは最大2ステップ。それ以上の遅れは捨てる（追いつこうとして更に重くなる悪循環を防ぐ）。
+  // ・ステップが進まなかったフレーム（120Hz 表示の2回に1回）は描き直さない。
+  const STEP = 1000 / 60, MAX_STEPS = 2;
+  // ---- 自動解像度：試合中に 60fps を保てない端末では、内部解像度を一段ずつ下げる（画が少し甘くなる代わりに動きを優先）。
+  // 120フレームごとに「21ms を超えた（＝60fps に間に合わなかった）フレームの割合」を見て、2回続けて 12% を超えたら 0.85 倍に下げる（下限は等倍 1.0）。
+  // 下げても割合が 3/4 以下に減らなければ解像度が原因ではないので、元に戻して以後は触らない。URL に ?noadapt を付けると無効。
+  const adapt = { on: !/[?&]noadapt\b/.test(location.search), n: 0, slow: 0, bad: 0, prev: null, log: [] };
+  function adaptTick(dt) {
+    if (!adapt.on || !scr || (scr.kind !== 'battle' && scr.kind !== 'obattle')) { adapt.n = 0; adapt.slow = 0; adapt.bad = 0; return; }
+    if (++adapt.n <= 0) return; // 切替直後の様子見
+    if (dt > 21) adapt.slow++;
+    if (adapt.n < 120) return;
+    const r = adapt.slow / adapt.n; adapt.n = 0; adapt.slow = 0;
+    if (adapt.prev) { // 直前に下げた結果の判定
+      const p = adapt.prev; adapt.prev = null;
+      if (r > p.r * 0.75) { maxR = p.maxR; adapt.on = false; adapt.log.push({ revertTo: p.maxR, slow: +r.toFixed(2) }); fit(); return; }
+      adapt.bad = r > 0.12 ? 1 : 0; // 効いた。まだ遅ければ次の窓でもう一段
+    } else adapt.bad = r > 0.12 ? adapt.bad + 1 : 0;
+    if (adapt.bad >= 2 && ratio > 1) {
+      adapt.prev = { maxR, r }; maxR = Math.max(1, ratio * 0.85); adapt.bad = 0; adapt.n = -30;
+      fit(); adapt.log.push({ ratio: +ratio.toFixed(3), slow: +r.toFixed(2) });
+    }
   }
   let last = 0, acc = 0;
   function frame(ts) {
     requestAnimationFrame(frame);
     if (!frame.booted) { frame.booted = true; const b = document.getElementById('boot'); if (b) b.remove(); }
-    if (!last) last = ts;
-    acc += Math.min(100, ts - last); last = ts;
+    if (!last) { last = ts; tick(); render(); return; }
+    let dt = ts - last; last = ts;
+    if (dt > 0 && dt < 1000) { dts[dtI] = dt; dtI = (dtI + 1) % FPS_N; if (dtN < FPS_N) dtN++; adaptTick(dt); }
+    if (Math.abs(dt - STEP) < 3) dt = STEP;
+    acc += Math.min(100, dt);
     let n = 0;
-    while (acc >= 1000 / 60 && n < 5) { tick(); acc -= 1000 / 60; n++; }
-    if (acc > 100) acc = 0;
-    render();
+    while (acc >= STEP - 0.05 && n < MAX_STEPS) { tick(); acc -= STEP; n++; }
+    if (acc >= STEP) { dropped += Math.floor(acc / STEP); acc = 0; }
+    else if (acc < 0) acc = 0;
+    if (n) render();
   }
   go(Title());
   requestAnimationFrame(frame);
 
   // 自動確認用の覗き窓（ゲーム進行には使わない）
-  N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, on, save, isUnlocked, tick, render };
+  N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, get ratio() { return ratio; }, on, save, isUnlocked, tick, render, fps: fpsStats, adapt };
 })();

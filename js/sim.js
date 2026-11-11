@@ -22,7 +22,22 @@
     }
     b.p = []; b.timer = ROUND_FRAMES; b.phase = 'intro'; b.pt = 0; b.rw = -1; b.tu = 0; b.stop = 0;
   }
-  const mv = (c, k) => (k === 'l' ? c.l : k === 'h' ? c.h : c.sp);
+  // 技データ。'l'=弱 'h'=強 's'=必殺。派生技（BRIEF4）: 'dl'/'dh'=ダッシュ攻撃、'al'/'ah'=空中の落下攻撃（弱・強のデータから作る）
+  const DERIVED = {};
+  function derive(c, k) {
+    const hv = k[1] === 'h', n = hv ? c.h : c.l;
+    if (k[0] === 'd') // ダッシュ攻撃：前進しながら攻撃。踏み込み大・ダメージ中・硬直やや大
+      return { su: n.su + (hv ? 0 : 2), ac: n.ac + 3, rc: n.rc + (hv ? 8 : 6), dmg: hv ? n.dmg : Math.round(n.dmg * 1.5), rng: n.rng + 8,
+        adv: (hv ? 4.5 : 5.5) + c.spd * 0.6, hs: hv ? 24 : 19, kb: hv ? 10 : 7, heavy: hv ? 1 : 0, dash: 1 };
+    // 落下攻撃：斜め下へ踏み込み、着地するまで判定が続く。着地硬直 rc
+    return { su: hv ? 7 : 4, ac: 60, rc: hv ? 15 : 9, dmg: hv ? n.dmg : n.dmg + 1, rng: Math.round(n.rng * 0.8), hs: hv ? 23 : 16, kb: hv ? 8 : 5,
+      heavy: hv ? 1 : 0, fall: 1, fvx: hv ? 6.5 : 5, fvy: hv ? 12 : 9.5 };
+  }
+  function mv(c, k) {
+    if (k === 'l') return c.l; if (k === 'h') return c.h; if (k === 's' || !k) return c.sp;
+    return DERIVED[c.id + k] || (DERIVED[c.id + k] = derive(c, k));
+  }
+  const isHeavy = k => k === 'h' || k === 'dh' || k === 'ah'; // 強攻撃系（強・ダッシュ強・落下強）
   function setSt(f, s) { if (f.st !== s) { f.st = s; f.t = 0; } }
   function hurt(f) {
     const c = CHARS[f.ci], sc = c.b.sc || 1;
@@ -52,7 +67,7 @@
       else if (d.y < GY) d.vy = -5;
       a.meter = Math.min(100, a.meter + dmg * 1.1); d.meter = Math.min(100, d.meter + dmg * 0.7);
       b.ev.push({ k: 'hit', x: px, y: py, h: (m.heavy || m.launch) ? 1 : 0, sp: m.sp ? 1 : 0, c: d.combo, s: ai, d: dmg });
-      b.stop = m.heavy ? 7 : 4;
+      b.stop = m.heavy ? 9 : 4; // ヒットストップ：強は弱の2倍以上
       if (d.hp <= 0) { d.hp = 0; d.st = 'ko'; d.t = 0; d.vy = -9; d.vx = dir * 6; d.y = Math.min(d.y, GY - 1); }
     }
     if (!proj && a.y >= GY && (d.x <= XL + 2 || d.x >= XR - 2)) a.vx = -dir * (m.kb || 4) * 0.8;
@@ -62,8 +77,9 @@
   function startAtk(b, i, k) {
     const f = b.f[i];
     f.st = 'atk'; f.t = 0; f.atk = k; f.hn = 0; f.ht = -99; f.air = f.y < GY ? 1 : 0; f.cr = 0;
+    if (f.air) { const o = b.f[1 - i]; if (o.x !== f.x) f.face = o.x > f.x ? 1 : -1; } // 落下攻撃は相手の方へ向き直る
     if (k === 's') b.ev.push({ k: 'sp', x: f.x, y: f.y - 70, s: i });
-    else b.ev.push({ k: 'sw', h: k === 'h' ? 1 : 0 });
+    else b.ev.push({ k: 'sw', h: isHeavy(k) ? 1 : 0, v: k[0] === 'd' ? 1 : k[0] === 'a' ? 2 : 0, x: f.x, y: f.y, s: i });
   }
 
   function spawnProj(b, i, f, m) {
@@ -87,7 +103,8 @@
         if (t === m.su) { f.vy = m.jump; f.vx = f.face * 3; }
         if (t < m.su + 4) f.inv = 2; else if (gnd) f.vx *= 0.7;
       } else if (gnd) {
-        if (m.adv && t > m.su - 2 && t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7;
+        if (m.dash) { if (t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7; } // ダッシュ攻撃：発生前から前進し続ける
+        else if (m.adv && t > m.su - 2 && t <= m.su + m.ac) f.vx = f.face * m.adv; else f.vx *= 0.7;
       }
       if (ty === 'warp' && t === m.su - 1) {
         const side = o.x > f.x ? 1 : -1;
@@ -98,6 +115,9 @@
         b.ev.push({ k: 'warp', x: f.x, y: f.y - 60 });
       }
       if (m.proj && t === m.su) spawnProj(b, i, f, m);
+    } else if (m.fall) {
+      if (t < m.su) { f.vy *= 0.6; f.vx *= 0.8; } // 一瞬ためてから
+      else if (t === m.su) { f.vy = Math.max(f.vy, m.fvy); f.vx = f.face * m.fvx; } // 斜め下へ踏み込む
     }
     if (t > m.su && t <= m.su + m.ac && m.dmg > 0 && f.hn < (m.hits || 1) && t - f.ht >= (m.gap || 1)) {
       const xa = f.x + f.face * 6, xb = f.x + f.face * m.rng;
@@ -128,10 +148,11 @@
       if (gnd) f.vx *= 0.8;
     } else if (f.st === 'dash') {
       if (f.t >= 11) { f.st = 'idle'; f.t = 0; f.vx = 0; }
+      else if ((pr & (K.A | K.H)) && (f.vx > 0 ? 1 : -1) === f.face) startAtk(b, i, (pr & K.A) ? 'dl' : 'dh'); // 前ダッシュ中の弱/強＝ダッシュ攻撃
     } else if (f.st === 'atk') {
       updAtk(b, i, f, o, c);
     } else if (f.st === 'jump') {
-      if (pr & K.A) startAtk(b, i, 'l'); else if (pr & K.H) startAtk(b, i, 'h');
+      if (pr & K.A) startAtk(b, i, 'al'); else if (pr & K.H) startAtk(b, i, 'ah'); // 空中の弱/強＝落下攻撃
     } else {
       if (f.x !== o.x) f.face = o.x > f.x ? 1 : -1;
       f.cr = 0;
@@ -159,7 +180,8 @@
         if (f.st === 'jump') { f.st = 'idle'; f.t = 0; f.vx = 0; }
         else if (f.st === 'atk') {
           const m = mv(c, f.atk);
-          if (f.air) { f.st = 'idle'; f.t = 0; f.vx = 0; f.atk = ''; f.air = 0; }
+          if (f.air && m.fall) { f.air = 0; f.t = m.su + m.ac; f.vx = 0; b.ev.push({ k: 'land', x: f.x, h: m.heavy ? 1 : 0 }); } // 落下攻撃の着地硬直
+          else if (f.air) { f.st = 'idle'; f.t = 0; f.vx = 0; f.atk = ''; f.air = 0; }
           else if (f.atk === 's' && m.type === 'dive' && f.t < m.su + m.ac) { f.t = m.su + m.ac; f.vx = 0; }
         } else if (f.st === 'ko') f.vx *= 0.5;
       }
@@ -229,13 +251,22 @@
 
   // ---- CPU AI ----
   const AI_T = { react: [26, 20, 14, 9, 5], aggr: [0.35, 0.5, 0.65, 0.8, 0.92], guard: [0.1, 0.25, 0.45, 0.65, 0.85], sp: [0.2, 0.35, 0.5, 0.7, 0.9] };
-  function newAI(lv) { return { lv: Math.max(1, Math.min(5, lv)), cd: 20, held: 0 }; }
+  function newAI(lv) { return { lv: Math.max(1, Math.min(5, lv)), cd: 20, held: 0, mt: -99 }; }
   function aiInput(b, i, ai) {
     if (b.phase !== 'fight') return 0;
-    if (ai.cd > 0) { ai.cd--; return ai.held; }
     const n = ai.lv - 1, f = b.f[i], o = b.f[1 - i], c = CHARS[f.ci], oc = CHARS[o.ci];
     const d = Math.abs(o.x - f.x), toward = o.x > f.x ? K.R : K.L, away = o.x > f.x ? K.L : K.R, dashT = o.x > f.x ? K.DR : K.DL;
     const R = Math.random;
+    // ダッシュ攻撃・落下攻撃（1回のダッシュ／ジャンプにつき1度だけ判断する。反応待ち cd とは別枠）
+    if (b.frame - ai.mt > 30) {
+      const fwd = (o.x > f.x ? 1 : -1) === f.face;
+      if (f.st === 'dash' && f.t >= 3 && fwd && (f.vx > 0 ? 1 : -1) === f.face && d < mv(c, 'dh').rng + 110) {
+        ai.mt = b.frame; if (R() < AI_T.aggr[n] * 0.8) return ai.held | (R() < 0.55 ? K.A : K.H);
+      } else if (f.st === 'jump' && f.vy > -5 && d < 150 && f.y < GY - 50) {
+        ai.mt = b.frame; if (R() < AI_T.aggr[n] * 0.75) return (R() < 0.6 ? K.A : K.H);
+      }
+    }
+    if (ai.cd > 0) { ai.cd--; return ai.held; }
     let threat = o.st === 'atk' && o.atk && d < Math.min(mv(oc, o.atk).rng, 400) + 45;
     for (const p of b.p) if (p.o !== i && Math.abs(p.x - f.x) < 170 && (p.vx > 0) === (f.x > p.x)) threat = true;
     let held = 0, tap = 0;
@@ -262,13 +293,13 @@
       if (q < AI_T.aggr[n] + 0.12) {
         held = toward;
         if (R() < 0.08) held |= K.U;
-        else if (d > 260 && R() < 0.15) tap = dashT;
+        else if (d > 170 && R() < (d < 340 ? 0.34 : 0.15) && !f.dcd) tap = dashT; // 中距離はダッシュで詰める（→ ダッシュ攻撃）
       } else if (q > 0.93) held = away;
     }
     ai.held = held; ai.cd = Math.round(r * (0.6 + R() * 0.8));
     return held | tap;
   }
 
-  const api = { K, GY, XL, XR, COST, WINS, newBattle, step, mv, hurt, newAI, aiInput };
+  const api = { K, GY, XL, XR, COST, WINS, newBattle, step, mv, isHeavy, hurt, newAI, aiInput };
   if (NODE) module.exports = api; else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);

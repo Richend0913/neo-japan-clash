@@ -6,25 +6,56 @@
   const W = 960, HH = 540, PI = Math.PI;
   const FONT = '"Hiragino Kaku Gothic ProN","Hiragino Sans","Noto Sans JP","Noto Sans CJK JP","Yu Gothic","Meiryo",sans-serif';
   const font = (px, it) => `${it ? 'italic ' : ''}900 ${px}px ${FONT}`;
-  const glow = (c, col, blur) => { c.shadowColor = col; c.shadowBlur = blur; };
-  const noGlow = c => { c.shadowBlur = 0; c.shadowColor = 'transparent'; };
+  // shadowBlur は 1 回ごとにぼかし処理が走って重い。毎フレームの描画では使わず（GLOW=0 のとき glow は何もしない）、
+  // 発光つきの絵（ネオン文字・ベクター背景）は一度だけオフスクリーンに描いてキャッシュし、以後は貼るだけにする。
+  let GLOW = 0;
+  const glow = (c, col, blur) => { if (GLOW) { c.shadowColor = col; c.shadowBlur = blur; } };
+  const noGlow = c => { if (GLOW) { c.shadowBlur = 0; c.shadowColor = 'transparent'; } };
+  // 表示倍率（論理 960x540 → 実ピクセル）。キャッシュは実ピクセル解像度で持つので、倍率が変わったら作り直す
+  let SC = 1, CW = W, CHT = HH;
+  const mkCv = (w, h) => { const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.ceil(w)); cv.height = Math.max(1, Math.ceil(h)); return cv; };
+  const MC = mkCv(4, 4).getContext('2d'); // 文字幅の計測用
+  const TC = new Map(); // 文字などのスプライトキャッシュ
+  function setScale(r, cw, ch) {
+    if (r === SC && cw === CW && ch === CHT) return;
+    SC = r; CW = cw; CHT = ch; stageKey = ''; dimKey = ''; TC.clear();
+    for (const k in IMG) { IMG[k].sc = {}; IMG[k].scn = 0; }
+    for (const k in GR) delete GR[k];
+  }
+  function sprite(key, build) {
+    let e = TC.get(key);
+    if (!e) { if (TC.size > 260) { let n = 0; for (const k of TC.keys()) { TC.delete(k); if (++n >= 90) break; } } e = build(); TC.set(key, e); }
+    return e;
+  }
+  // 論理サイズ lw x lh のオフスクリーンに fn で描く（発光あり）
+  function mkSprite(lw, lh, fn) {
+    const cv = mkCv(lw * SC, lh * SC), x = cv.getContext('2d'); x.scale(SC, SC);
+    const g0 = GLOW; GLOW = 1; fn(x); GLOW = g0;
+    return { cv, lw: cv.width / SC, lh: cv.height / SC };
+  }
+  // キャッシュを論理座標 (x,y) に貼る。素の倍率のときは実ピクセルに合わせて等倍で貼る（にじみ防止・高速）
+  function blit(c, e, x, y) {
+    const m = c.getTransform();
+    if (m.b === 0 && m.c === 0 && m.a === m.d && Math.abs(m.a - SC) < 1e-6) { c.setTransform(1, 0, 0, 1, 0, 0); c.drawImage(e.cv, Math.round(m.e + x * SC), Math.round(m.f + y * SC)); c.setTransform(m); }
+    else c.drawImage(e.cv, x, y, e.lw, e.lh);
+  }
   let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
 
   // ================= 画像アセット =================
   // スプライト素材（assets/sprites/<id>.webp と assets/portraits/<id>.webp）があるキャラの一覧。素材を追加したらここに id を足す。
   // 一覧に無いキャラは読み込みを試みず、ベクター描画のままになる（存在しない画像への 404 を出さないため）。
   // 体の中心（立ち位置の基準）は画像の不透明部分の重心から自動で決める。ずれるキャラは { ax: 0〜1 } で上書きできる。
-  // ポーズ絵は <id>_atk（攻撃）/ <id>_hit（被弾・ダウン）/ <id>_grd（ガード）。値は [待機, 攻撃, 被弾, ガード] の体の中心の横位置（0〜1）。
+  // ポーズ絵は <id>_atk（弱攻撃・必殺）/ <id>_hit（被弾・ダウン）/ <id>_grd（ガード）/ <id>_hev（強攻撃）。値は [待機, 攻撃, 被弾, ガード, 強攻撃] の体の中心の横位置（0〜1）。
   // 胴体の太い部分から事前に測った値で、ポーズを切り替えても体の位置が飛ばないようにする（武器やエフェクトの張り出しは無視）。
   const ART = {
-    zanrai: [0.301, 0.467, 0.468, 0.46], mikoto: [0.519, 0.444, 0.549, 0.579], kagemaru: [0.366, 0.465, 0.446, 0.371], gounen: [0.365, 0.407, 0.504, 0.44],
-    konko: [0.517, 0.336, 0.398, 0.501], raidenzan: [0.427, 0.411, 0.341, 0.454], shuki: [0.452, 0.48, 0.587, 0.468], shion: [0.445, 0.372, 0.48, 0.437],
-    ougi: [0.532, 0.424, 0.483, 0.438], nishiki: [0.244, 0.306, 0.43, 0.375], kurotengu: [0.401, 0.489, 0.462, 0.409], ryujin: [0.472, 0.468, 0.439, 0.489],
-    mumei: [0.397, 0.471, 0.483, 0.398], kaguya: [0.492, 0.508, 0.578, 0.55] };
-  const POSES = ['atk', 'hit', 'grd'];
+    zanrai: [0.301, 0.467, 0.468, 0.46, 0.502], mikoto: [0.519, 0.444, 0.549, 0.579, 0.523], kagemaru: [0.366, 0.465, 0.446, 0.371, 0.518], gounen: [0.365, 0.407, 0.504, 0.44, 0.503],
+    konko: [0.517, 0.336, 0.398, 0.501, 0.487], raidenzan: [0.427, 0.411, 0.341, 0.454, 0.537], shuki: [0.452, 0.48, 0.587, 0.468, 0.514], shion: [0.445, 0.372, 0.48, 0.437, 0.493],
+    ougi: [0.532, 0.424, 0.483, 0.438, 0.555], nishiki: [0.244, 0.306, 0.43, 0.375, 0.515], kurotengu: [0.401, 0.489, 0.462, 0.409, 0.523], ryujin: [0.472, 0.468, 0.439, 0.489, 0.523],
+    mumei: [0.397, 0.471, 0.483, 0.398, 0.417], kaguya: [0.492, 0.508, 0.578, 0.55, 0.463] };
+  const POSES = ['atk', 'hit', 'grd', 'hev'];
   const IMG = {};
   function load(key, src, ax) { // 相対パス（GitHub Pages のサブパス配下でも動く）
-    const im = new Image(), e = IMG[key] = { im, ok: false, bad: false, tint: {} };
+    const im = new Image(), e = IMG[key] = { im, ok: false, bad: false, sc: {}, scn: 0 };
     if (ax != null) e.ax = ax;
     im.onload = () => { e.ok = im.naturalWidth > 0; }; im.onerror = () => { e.bad = true; };
     im.src = src; return e;
@@ -60,14 +91,21 @@
     }
     return (e.ax = ax);
   }
-  // 画像の形のまま単色で塗ったもの（被弾の白フラッシュ・ロック中の伏せ絵に使う）
-  function tinted(e, col) {
-    if (!e.tint[col]) {
-      const cv = document.createElement('canvas'); cv.width = e.im.naturalWidth; cv.height = e.im.naturalHeight;
-      const x = cv.getContext('2d'); x.drawImage(e.im, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = col; x.fillRect(0, 0, cv.width, cv.height);
-      e.tint[col] = cv;
+  // 画像を表示する実ピクセルの高さ hpx に縮小したもの（毎フレーム 720px の原画を高品質縮小すると重いので一度だけ作る）。
+  // col を渡すと、その形のまま単色で塗ったもの（被弾の白フラッシュ・ロック中の伏せ絵）
+  function scaled(e, hpx, col) {
+    hpx = Math.max(1, Math.round(hpx));
+    const key = col ? hpx + col : hpx; let cv = e.sc[key];
+    if (!cv) {
+      const im = e.im, w = Math.max(1, Math.round(im.naturalWidth * hpx / im.naturalHeight));
+      const base = col ? scaled(e, hpx) : null;
+      if (++e.scn > 8) { e.sc = {}; e.scn = 1; }
+      cv = mkCv(w, hpx); const x = cv.getContext('2d');
+      if (col) { x.drawImage(base, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = col; x.fillRect(0, 0, w, hpx); }
+      else { x.imageSmoothingQuality = 'high'; x.drawImage(im, 0, 0, w, hpx); }
+      e.sc[key] = cv;
     }
-    return e.tint[col];
+    return cv;
   }
   const clamp01 = v => Math.max(0, Math.min(1, v));
   const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
@@ -179,17 +217,32 @@
   const petals = [], holos = [];
   for (let i = 0; i < 44; i++) petals.push({ x: Math.random() * W, y: Math.random() * HH, s: 3 + Math.random() * 4, vx: -0.5 - Math.random() * 1.1, vy: 0.5 + Math.random() * 0.9, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.12 });
   for (let i = 0; i < 26; i++) holos.push({ x: Math.random() * W, y: Math.random() * HH, s: 2 + Math.random() * 3, vy: -0.25 - Math.random() * 0.6, ph: Math.random() * 6 });
-  function drawStage(c, t, dim) {
-    const st = ready('stage');
-    if (st) {
-      // 背景画像を 960x540 に cover フィット（はみ出す側を中央基準で切る）
-      const iw = st.im.naturalWidth, ih = st.im.naturalHeight, k = Math.max(W / iw, HH / ih), sw = W / k, sh = HH / k;
-      c.drawImage(st.im, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, W, HH);
-    } else {
-      if (!stageCv) stageCv = buildStage();
-      c.drawImage(stageCv, 0, 0);
+  // 背景は実ピクセル解像度のオフスクリーンに一度だけ描き、毎フレームは等倍で貼る（1792x1008 の画像を毎フレーム縮小して貼るのが最も重かった）。
+  // メニュー用の暗幕つき背景も1枚だけキャッシュする。
+  // ※ 背景を別の DOM レイヤーに分けて毎フレーム貼らない案も試したが、透明キャンバスの合成が増えて計測上は遅くなったので採っていない
+  let stageL = null, stageKey = '', dimL = null, dimKey = '';
+  function stageLayer(dim) {
+    const st = ready('stage'), key = (st ? 'i' : 'v') + CW + 'x' + CHT;
+    if (stageKey !== key) {
+      stageKey = key; dimKey = ''; stageL = mkCv(CW, CHT); const x = stageL.getContext('2d', { alpha: false });
+      x.imageSmoothingQuality = 'high'; x.scale(CW / W, CHT / HH);
+      if (st) { // 背景画像を 960x540 に cover フィット（はみ出す側を中央基準で切る）
+        const iw = st.im.naturalWidth, ih = st.im.naturalHeight, k = Math.max(W / iw, HH / ih), sw = W / k, sh = HH / k;
+        x.drawImage(st.im, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, W, HH);
+      } else { if (!stageCv) { GLOW = 1; stageCv = buildStage(); GLOW = 0; } x.drawImage(stageCv, 0, 0); }
     }
+    if (!dim) return stageL;
+    if (dimKey !== stageKey + dim) {
+      dimKey = stageKey + dim; if (!dimL || dimL.width !== CW || dimL.height !== CHT) dimL = mkCv(CW, CHT);
+      const x = dimL.getContext('2d', { alpha: false }); x.drawImage(stageL, 0, 0); x.fillStyle = `rgba(6,2,20,${dim})`; x.fillRect(0, 0, CW, CHT);
+    }
+    return dimL;
+  }
+  function drawStage(c, t, dim) {
+    const st = ready('stage'), k = 1 - (dim || 0);
+    c.imageSmoothingEnabled = false; c.drawImage(stageLayer(dim || 0), 0, 0, W, HH); c.imageSmoothingEnabled = true;
     // 提灯（ゆらぎ発光）※ベクター背景のときだけ。画像背景には提灯が描き込まれている
+    c.globalAlpha = k;
     for (let i = 0; !st && i < lanterns.length; i++) {
       const [x, y] = lanterns[i], fl = 0.75 + 0.25 * Math.sin(t * 0.05 + i * 1.7);
       c.fillStyle = `rgba(255,120,70,${0.16 * fl})`; c.beginPath(); c.arc(x, y, 30, 0, PI * 2); c.fill();
@@ -197,26 +250,31 @@
       c.fillStyle = '#1a0a1f'; c.fillRect(x - 6, y - 17, 12, 3); c.fillRect(x - 6, y + 14, 12, 3);
       c.fillStyle = `rgba(255,235,170,${0.8 * fl})`; c.fillRect(x - 1.5, y - 8, 3, 16);
     }
-    // ホログラム粒子
+    // ホログラム粒子（26個固定）
+    c.fillStyle = 'rgb(120,235,255)';
     for (const h of holos) {
       h.y += h.vy; if (h.y < -8) { h.y = HH + 8; h.x = Math.random() * W; }
-      const a = 0.35 + 0.3 * Math.sin(t * 0.08 + h.ph);
-      c.fillStyle = `rgba(120,235,255,${a})`; c.fillRect(h.x, h.y, h.s, h.s);
-      c.fillStyle = `rgba(120,235,255,${a * 0.35})`; c.fillRect(h.x - h.s, h.y + h.s * 0.25, h.s * 3, h.s * 0.5);
+      const a = (0.35 + 0.3 * Math.sin(t * 0.08 + h.ph)) * k;
+      c.globalAlpha = a; c.fillRect(h.x, h.y, h.s, h.s);
+      c.globalAlpha = a * 0.35; c.fillRect(h.x - h.s, h.y + h.s * 0.25, h.s * 3, h.s * 0.5);
     }
-    if (dim) { c.fillStyle = `rgba(6,2,20,${dim})`; c.fillRect(0, 0, W, HH); }
+    c.globalAlpha = 1;
   }
+  // 花びら（44枚固定）。見た目は従来どおりの回転する楕円だが、save/restore をやめて1本のパスにまとめて1回で塗る
   function drawPetals(c, t) {
+    c.fillStyle = 'rgba(255,170,215,.85)'; c.beginPath();
     for (const p of petals) {
       p.x += p.vx + Math.sin(t * 0.02 + p.r) * 0.4; p.y += p.vy; p.r += p.vr;
       if (p.y > HH + 8 || p.x < -10) { p.y = -8; p.x = Math.random() * (W + 200); }
-      c.save(); c.translate(p.x, p.y); c.rotate(p.r); c.scale(1, 0.55 + 0.4 * Math.sin(t * 0.06 + p.r));
-      c.fillStyle = 'rgba(255,170,215,.85)'; c.beginPath(); c.ellipse(0, 0, p.s, p.s * 0.6, 0, 0, PI * 2); c.fill(); c.restore();
+      c.moveTo(p.x + Math.cos(p.r) * p.s, p.y + Math.sin(p.r) * p.s);
+      c.ellipse(p.x, p.y, p.s, p.s * 0.6 * (0.55 + 0.4 * Math.sin(t * 0.06 + p.r)), p.r, 0, PI * 2);
     }
+    c.fill();
   }
 
   // ================= ファイター =================
   const UL = 28, LL = 30, TOR = 44, UA = 22, LA = 22, HR = 13;
+  const isHv = N.isHeavy, baseK = k => (k.length === 2 ? k[1] : k), varK = k => (k.length === 2 ? k[0] : ''); // 'dh' → 強 / ダッシュ
   const pt = (p, a, l) => ({ x: p.x + Math.sin(a) * l, y: p.y + Math.cos(a) * l });
   const BASE = { lean: 0.1, aF: [0.55, 1.9], aB: [0.25, 1.6], lF: [0.3, -0.05], lB: [-0.3, -0.3], w: 2.5 };
   const P = o => Object.assign({}, BASE, o);
@@ -227,8 +285,9 @@
   }
   const CROUCH_F = [1.25, -0.35], CROUCH_B = [0.5, -1.15], AIR_F = [1.0, -0.5], AIR_B = [0.35, -1.0];
   function atkPoses(f, m) {
-    if (f.atk === 'l') return [P({ aF: [0.1, 2.3], w: 2.6, lean: 0 }), P({ aF: [1.5, 1.57], w: 1.57, lean: 0.28, lF: [0.55, 0], lB: [-0.5, -0.45] })];
-    if (f.atk === 'h') return [P({ aF: [2.7, 3.1], aB: [2.3, 2.9], w: 3.7, lean: -0.12 }), P({ aF: [1.15, 1.3], aB: [0.9, 1.3], w: 1.15, lean: 0.48, lF: [0.85, -0.1], lB: [-0.7, -0.55] })];
+    const k = baseK(f.atk);
+    if (k === 'l') return [P({ aF: [0.1, 2.3], w: 2.6, lean: 0 }), P({ aF: [1.5, 1.57], w: 1.57, lean: 0.28, lF: [0.55, 0], lB: [-0.5, -0.45] })];
+    if (k === 'h') return [P({ aF: [2.7, 3.1], aB: [2.3, 2.9], w: 3.7, lean: -0.12 }), P({ aF: [1.15, 1.3], aB: [0.9, 1.3], w: 1.15, lean: 0.48, lF: [0.85, -0.1], lB: [-0.7, -0.55] })];
     switch (m.type) {
       case 'proj': return [P({ aF: [2.4, 2.9], aB: [-0.4, 0.3], w: 3, lean: -0.1 }), P({ aF: [1.5, 1.6], aB: [1.3, 1.7], w: 1.6, lean: 0.25, lF: [0.6, 0], lB: [-0.5, -0.4] })];
       case 'beam': return [P({ aF: [1.2, 1.57], aB: [1.0, 1.9], w: 1.57, lean: 0.1, lF: [0.5, 0], lB: [-0.6, -0.5] }), P({ aF: [1.57, 1.57], aB: [1.2, 1.8], w: 1.57, lean: -0.08, lF: [0.5, 0], lB: [-0.6, -0.5] })];
@@ -466,30 +525,43 @@
   // 斬撃の弧・ビーム・必殺技の溜めオーラ（ベクター／スプライト共通。向きを反転済みの座標系で呼ぶ）
   // geo: hx,hy=手元  cy=弧の中心の高さ  R=弧の半径  ay=オーラ中心の高さ  k=太さなどの倍率
   function drawAtkFx(c, f, m, g, alpha, geo) {
-    const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k;
-    if (t > m.su && t <= m.su + m.ac + 3) {
-      const u = 1 - (t - m.su) / (m.ac + 4);
+    const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k, hv = isHv(f.atk), fall = !!m.fall;
+    const tail = hv ? 7 : 3; // 強の斬撃は長く残る
+    if (t > m.su && t <= m.su + m.ac + tail && !(fall && !f.air)) {
+      const u = fall ? 0.8 : 1 - (t - m.su) / (m.ac + tail + 1);
       if (ty === 'beam') {
         if (t <= m.su + m.ac) {
           const hgt = (13 + Math.sin(t * 1.7) * 4) * k;
-          glow(c, g, 20); c.fillStyle = g; c.fillRect(geo.hx + 20, geo.hy - hgt / 2, 900, hgt);
-          c.fillStyle = '#fff'; c.fillRect(geo.hx + 20, geo.hy - hgt / 5, 900, hgt / 2.5); noGlow(c);
+          c.fillStyle = g; c.globalAlpha = alpha * 0.28; c.fillRect(geo.hx + 14, geo.hy - hgt * 1.3, 900, hgt * 2.6);
+          c.globalAlpha = alpha; c.fillRect(geo.hx + 20, geo.hy - hgt / 2, 900, hgt);
+          c.fillStyle = '#fff'; c.fillRect(geo.hx + 20, geo.hy - hgt / 5, 900, hgt / 2.5);
           c.strokeStyle = g; c.lineWidth = 2; for (let n = 0; n < 3; n++) { c.beginPath(); c.arc(geo.hx + 26 + n * 16, geo.hy, 12 + n * 7 + (t % 4), 0, PI * 2); c.stroke(); }
         }
       } else if (m.dmg > 0) {
         let a0 = -0.5, a1 = 0.45;
-        if (f.atk === 'h' || ty === 'quake') { a0 = -1.35; a1 = 0.6; } else if (ty === 'upper') { a0 = -1.5; a1 = 0.7; } else if (ty) { a0 = -0.8; a1 = 0.7; }
+        if (hv || ty === 'quake') { a0 = -1.45; a1 = 0.7; } else if (ty === 'upper') { a0 = -1.5; a1 = 0.7; } else if (ty) { a0 = -0.8; a1 = 0.7; }
         if (f.air || ty === 'dive') { a0 = -0.2; a1 = 1.3; }
-        c.globalAlpha = alpha * Math.max(0, u); glow(c, g, 14);
-        c.strokeStyle = g; c.lineWidth = (ty ? 13 : 8) * k; c.beginPath(); c.arc(0, geo.cy, geo.R, a0, a1); c.stroke();
-        c.strokeStyle = '#fff'; c.lineWidth = 2.5 * k; c.beginPath(); c.arc(0, geo.cy, geo.R + 2, a0 + 0.1, a1 - 0.1); c.stroke(); noGlow(c);
-        c.globalAlpha = alpha;
+        // 弱＝細く短い弧、強＝太く大きい二重の弧（発光はぼかしではなく、太い半透明の線を下に敷く）
+        const R = geo.R * (hv ? 1.14 : 1), lw = (ty ? 13 : hv ? 17 : 8) * k, a = alpha * Math.max(0, u);
+        c.lineCap = 'round'; c.strokeStyle = g;
+        c.globalAlpha = a * 0.26; c.lineWidth = lw * 2.3; c.beginPath(); c.arc(0, geo.cy, R, a0, a1); c.stroke();
+        c.globalAlpha = a; c.lineWidth = lw; c.beginPath(); c.arc(0, geo.cy, R, a0, a1); c.stroke();
+        if (hv) { c.globalAlpha = a * 0.55; c.lineWidth = lw * 0.5; c.beginPath(); c.arc(0, geo.cy, R - lw * 1.5, a0 + 0.25, a1 - 0.1); c.stroke(); c.globalAlpha = a; }
+        c.strokeStyle = '#fff'; c.lineWidth = (hv ? 4.5 : 2.5) * k; c.beginPath(); c.arc(0, geo.cy, R + 2, a0 + 0.1, a1 - 0.1); c.stroke();
+        c.lineCap = 'butt'; c.globalAlpha = alpha;
       }
     }
     if (f.atk === 's' && t <= m.su) {
-      c.globalAlpha = 0.55; glow(c, g, 16); c.strokeStyle = g; c.lineWidth = 3;
-      c.beginPath(); c.ellipse(0, geo.ay, (36 + (m.su - t) * 1.6) * k, (62 + (m.su - t) * 1.6) * k, 0, 0, PI * 2); c.stroke(); noGlow(c);
+      c.globalAlpha = 0.55; c.strokeStyle = g; c.lineWidth = 3;
+      c.beginPath(); c.ellipse(0, geo.ay, (36 + (m.su - t) * 1.6) * k, (62 + (m.su - t) * 1.6) * k, 0, 0, PI * 2); c.stroke();
     }
+    // 強攻撃の溜め：光の輪が体に向かって縮む（弱には無い）
+    if (hv && !fall && t <= m.su) {
+      const u = t / m.su;
+      c.strokeStyle = g; c.lineWidth = 3.5 * k;
+      for (let n = 0; n < 2; n++) { const q = Math.max(0, u - n * 0.3); if (q <= 0) continue; c.globalAlpha = alpha * 0.7 * q; c.beginPath(); c.arc(0, geo.ay, (70 - 48 * q) * k, 0, PI * 2); c.stroke(); }
+    }
+    c.globalAlpha = alpha;
   }
 
   // ---- スプライト描画（1枚絵 + 手続きアニメーション。動きは sim の状態だけから決める） ----
@@ -500,24 +572,28 @@
   // sim の状態から使うポーズを選ぶ（'' = 待機絵）
   function poseKind(f, m) {
     switch (f.st) {
-      case 'atk': return f.t > m.su && f.t <= m.su + m.ac + atkHold(m) ? 'atk' : '';
+      case 'atk': return f.t > m.su && f.t <= m.su + m.ac + atkHold(m) ? (isHv(f.atk) ? 'hev' : 'atk') : ''; // 強攻撃系は専用ポーズ
       case 'hit': case 'ko': return 'hit';
       case 'guard': case 'block': return 'grd';
       default: return '';
     }
   }
+  // ポーズ切替のクロスフェード用に、直前に描いたポーズ絵を覚えておく（描画側だけの記憶。sim には触らない）
+  const poseMem = [{}, {}], XFADE = [0.6, 0.36, 0.16];
   function drawSprite(c, f, o, idle) {
     const ch = CHARS[f.ci], t = f.t, st = f.st, g = ch.col.g;
     const m = st === 'atk' ? N.mv(ch, f.atk) : null, ty = m && f.atk === 's' ? m.type : '';
-    const kind = o.win ? '' : poseKind(f, m), pe = kind ? poseOf(f.ci, kind) : null; // ポーズ絵が未ロードなら待機絵
-    const e = pe || idle, im = e.im;
+    const kind = o.win ? '' : poseKind(f, m);
+    // ポーズ絵が未ロードなら待機絵（強攻撃ポーズが未ロードの間は通常の攻撃ポーズ）
+    const pe = kind ? (poseOf(f.ci, kind) || (kind === 'hev' ? poseOf(f.ci, 'atk') : null)) : null;
+    const e = pe || idle, im = e.im, z = (o.zoom || 1) * SC;
     // 高さを待機絵と同じ H に揃える（攻撃絵は武器ぶん横に広いだけで、体の大きさは変わらない）
     const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
     const fw = (f.vx >= 0 ? 1 : -1) === f.face; // 前進中か
-    // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数
-    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, alpha = o.alpha == null ? 1 : o.alpha;
+    // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数  streak=スピード線（1=水平 2=斜め下）
+    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, ga = 0.3, streak = 0, alpha = o.alpha == null ? 1 : o.alpha;
     switch (st) {
-      case 'walk': rot = fw ? 0.045 : -0.035; dy = -Math.abs(Math.sin(t * Math.abs(f.vx) * 0.07)) * 3; break; // 上下動は移動速度に同期
+      case 'walk': rot = (fw ? 1 : -1) * 0.05 * Math.min(1, t / 5); dy = -Math.abs(Math.sin(t * Math.abs(f.vx) * 0.07)) * 3; break; // 進行方向へ最大約3°傾く。上下動は移動速度に同期
       case 'dash': rot = fw ? 0.2 : -0.14; dy = -3; ghost = 3; break;
       case 'jump': py = H * 0.5; rot = Math.max(-0.22, Math.min(0.22, f.vy * 0.011 + f.vx * f.face * 0.012)); break;
       case 'crouch': sy = 0.74; sx = 1.05; break;
@@ -526,15 +602,30 @@
       case 'hit': { const u = Math.max(0, 1 - t / 16); rot = pe ? -0.03 - 0.1 * u : -0.1 - 0.24 * u; dx = -8 * u; white = t < 9 && (t >> 1) % 2 === 0 ? 0.9 : 0; break; }
       case 'ko': { const u = Math.min(1, t / 16); rot = -u * PI / 2; dy = -ax * u; white = t < 6 && t % 2 === 0 ? 0.9 : 0; alpha *= 1 - 0.5 * clamp01((t - 30) / 40); break; }
       case 'atk': {
-        const end = m.su + m.ac, lean = f.atk === 'l' ? 0.08 : 0.15;
-        // 突進系の必殺技は sim 側が本体を動かすので、見た目の踏み込みは小さくする
-        const reach = f.atk === 'l' ? 20 : f.atk === 'h' ? 32 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
-        if (t <= m.su) { const u = t / m.su; dx = -10 * u; rot = -0.07 * u; sy = 1 - 0.05 * u; sx = 1 + 0.02 * u; } // 予備動作：少し沈んで後ろに引く
-        else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -10 + (reach + 10) * u; rot = -0.07 + (lean + 0.07) * u; if (m.adv) ghost = 2; }
-        else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
-        if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
+        const end = m.su + m.ac, vr = varK(f.atk), sp = f.atk === 's', hv = isHv(f.atk);
+        if (m.fall) { // 落下攻撃：ためて → 斜め下へ傾いて突っ込む → 着地で沈む
+          if (f.air) {
+            py = H * 0.5;
+            if (t <= m.su) { const u = t / m.su; rot = -0.28 * u; sy = 1 - 0.04 * u; }
+            else { rot = hv ? 0.6 : 0.46; ghost = hv ? 3 : 2; ga = 0.42; streak = 2; }
+          } else { const u = 1 - Math.min(1, (t - end) / m.rc); sy = 1 - 0.13 * u; sx = 1 + 0.06 * u; rot = 0.1 * u; }
+        } else if (vr === 'd') { // ダッシュ攻撃：前傾のまま走り込み、スピード線と濃い残像
+          const lean = hv ? 0.24 : 0.18;
+          if (t <= m.su) { rot = 0.2; dy = -3; ghost = 3; ga = 0.42; streak = 1; }
+          else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = 16 * u; rot = 0.2 + (lean - 0.2) * u; ghost = 4; ga = 0.46; streak = 1; }
+          else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = 16 * u * u; rot = lean * u; if (u > 0.6) ghost = 2; }
+        } else {
+          // 弱＝小さく速い。強＝大きく引いて（溜め）深く踏み込む。突進系の必殺技は sim 側が本体を動かすので、見た目の踏み込みは小さくする
+          const big = hv && !sp, lean = f.atk === 'l' ? 0.08 : big ? 0.2 : 0.15;
+          const reach = f.atk === 'l' ? 20 : big ? 44 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
+          const back = big ? 22 : 10, br = big ? 0.14 : 0.07, bs = big ? 0.09 : 0.05;
+          if (t <= m.su) { let u = t / m.su; if (big) u = u * u * (3 - 2 * u); dx = -back * u; rot = -br * u; sy = 1 - bs * u; sx = 1 + bs * 0.4 * u; if (big && t > m.su - 3) dx += (t % 2 ? 1.5 : -1.5); } // 予備動作：沈んで後ろに引く（強は深く、最後に震える）
+          else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -back + (reach + back) * u; rot = -br + (lean + br) * u; if (m.adv) ghost = 2; }
+          else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
+          if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
+        }
         if (ty === 'warp' && t < m.su) alpha *= 0.25 + 0.3 * Math.abs(Math.sin(t));
-        if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const z = 1 + 0.08 * (1 - (t - f.ht) / 6); sx *= z; sy *= z; } // ヒットの瞬間だけ拡大
+        if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const zz = 1 + (hv ? 0.13 : 0.08) * (1 - (t - f.ht) / 6); sx *= zz; sy *= zz; } // ヒットの瞬間だけ拡大（強は大きく）
         break;
       }
       default: { const b = Math.sin(t * 0.08); sy = 1 + b * 0.009; sx = 1 - b * 0.004; } // 待機：呼吸（足は地面に付けたまま、ごく小さく伸び縮み）
@@ -542,22 +633,60 @@
     if (o.land && st !== 'ko' && st !== 'hit') { sy *= 1 - 0.06 * o.land; sx *= 1 + 0.03 * o.land; } // 着地の瞬間だけ縦に潰れる
     if (o.win) dy = -Math.abs(Math.sin(t * 0.14)) * 12;
     if (ch.b.holo) alpha *= 0.86 + 0.1 * Math.sin(t * 0.3);
+    // クロスフェード：ポーズ絵が変わってから3フレームは、前のポーズ絵を薄く重ねてパッと切り替わる感じを消す
+    let old = null, oa = 0;
+    if (o.slot != null && o.frame != null) {
+      const pm = poseMem[o.slot];
+      if (pm.ci !== f.ci || o.frame < pm.frame || o.frame - pm.frame > 20) { pm.ci = f.ci; pm.e = e; pm.prev = null; }
+      else if (pm.e !== e) { pm.prev = pm.e; pm.at = o.frame; pm.e = e; }
+      pm.frame = o.frame;
+      if (pm.prev && pm.prev.ok && o.frame - pm.at < XFADE.length) { old = pm.prev; oa = XFADE[o.frame - pm.at]; }
+    }
     c.save(); c.translate(f.x, f.y); c.scale(f.face, 1); // 原画は右向き。左向きは水平反転
-    c.imageSmoothingQuality = 'high';
-    const put = (img, a, ox) => { c.globalAlpha = a; c.save(); c.translate(dx + ox, dy - py); c.rotate(rot); c.scale(sx, sy); c.drawImage(img, -ax, py - H, Wd, H); c.restore(); };
-    for (let n = ghost; n >= 1; n--) put(im, alpha * 0.3 / n, -f.vx * f.face * n * 3.2);
-    put(im, alpha, 0);
-    if (white) put(tinted(e, '#fff'), alpha * white, 0);
+    c.imageSmoothingQuality = 'low'; // 縮小済みのキャッシュを貼るだけなので高品質補間は不要
+    if (streak) { // スピード線（進行方向の後ろへ流れる）
+      c.save(); if (streak === 2) { c.translate(0, -H * 0.5); c.rotate(Math.atan2(m.fvy, m.fvx)); } else c.translate(0, -H * 0.5);
+      for (let n = 0; n < 6; n++) {
+        const len = 46 + ((t * 37 + n * 53) % 60), yy = (n - 2.5) * H * 0.13 + ((t * 11 + n * 7) % 9), x0 = -H * 0.16 - ((t * 23 + n * 31) % 30);
+        c.globalAlpha = alpha * (n % 2 ? 0.5 : 0.32); c.fillStyle = n % 2 ? '#fff' : g; c.fillRect(x0 - len, yy, len, n % 2 ? 2 : 3.5);
+      }
+      c.restore();
+    }
+    const put = (img, a, ox, w, an) => { c.globalAlpha = a; c.save(); c.translate(dx + ox, dy - py); c.rotate(rot); c.scale(sx, sy); c.drawImage(img, -an, py - H, w, H); c.restore(); };
+    const src = scaled(e, H * z);
+    const gs = Math.abs(f.vx) > 1 ? -f.vx * f.face * 3.2 : 0, gy = streak === 2 ? -f.vy * 2.2 : 0;
+    // 残像・クロスフェード・白フラッシュは薄い重ね描きなので補間なし（最近傍）で貼る。重ね描きが続く瞬間のコマ落ちを減らすため
+    c.imageSmoothingEnabled = false;
+    if (gs || gy) for (let n = ghost; n >= 1; n--) { c.globalAlpha = alpha * ga / n; c.save(); c.translate(dx + gs * n, dy - py + gy * n); c.rotate(rot); c.scale(sx, sy); c.drawImage(src, -ax, py - H, Wd, H); c.restore(); }
+    c.imageSmoothingEnabled = true;
+    put(src, alpha, 0, Wd, ax);
+    c.imageSmoothingEnabled = false;
+    if (old) { const ow = old.im.naturalWidth * H / old.im.naturalHeight; put(scaled(old, H * z), alpha * oa, 0, ow, anchorX(old, ch.id) * ow); }
+    if (white) put(scaled(e, H * z, '#fff'), alpha * white, 0, Wd, ax);
+    c.imageSmoothingEnabled = true;
     if (st === 'guard' || st === 'block') { // ガード：前面にシールド
       const r = H * (f.cr ? 0.3 : 0.4), hy = -H * (f.cr ? 0.32 : 0.45), hx = Math.min(Wd - ax, H * 0.28) - r * 0.55;
       const a = st === 'block' ? 0.95 : 0.5 + 0.12 * Math.sin(t * 0.3);
       c.globalAlpha = alpha * a * 0.22; c.fillStyle = g; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.closePath(); c.fill();
-      c.globalAlpha = alpha * a; glow(c, g, 14); c.strokeStyle = g; c.lineWidth = 5; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.stroke();
-      c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.arc(hx, hy, r - 5, -0.95, 0.95); c.stroke(); noGlow(c);
+      c.strokeStyle = g; c.globalAlpha = alpha * a * 0.28; c.lineWidth = 13; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.stroke();
+      c.globalAlpha = alpha * a; c.lineWidth = 5; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.stroke();
+      c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.arc(hx, hy, r - 5, -0.95, 0.95); c.stroke();
     }
     c.globalAlpha = alpha;
     if (m) drawAtkFx(c, f, m, g, alpha, { hx: H * 0.3, hy: -H * 0.56, cy: -H * 0.5, R: m.rng * 0.96 + 18, ay: -H * 0.45, k: H / 160 });
     c.restore();
+  }
+  // バトル前の先回り：そのキャラの絵を表示サイズに縮小したキャッシュを、1回の呼び出しにつき1枚ずつ作る（VS 画面・ラウンド開始演出の間に呼ぶ）。
+  // 試合中に初めて出るポーズで画像のデコードと縮小が走り、一瞬止まるのを防ぐ。全部そろったら true
+  function warmFighter(ci) {
+    const ch = CHARS[ci], id = ch.id; if (!ART[id]) return true;
+    const hpx = Math.round(spriteH(ch) * SC); let pending = false;
+    for (const k of ['s:' + id].concat(POSES.map(ps => 's:' + id + ':' + ps))) {
+      const e = IMG[k]; if (!e || (!e.ok && !e.bad)) { pending = true; continue; }
+      if (e.ok && !e.sc[hpx]) { scaled(e, hpx); return false; }
+    }
+    const hit = ready('s:' + id + ':hit'); if (hit && !hit.sc[hpx + '#fff']) { scaled(hit, hpx, '#fff'); return false; }
+    return !pending;
   }
   const hasSprite = ci => !!spriteOf(ci);
   // スプライトがあればスプライト、無い・未ロードならベクター描画（o.sil=シルエット指定は常にベクター）
@@ -577,48 +706,61 @@
   function drawProj(c, p, b) {
     const ch = CHARS[b.f[p.o].ci], g = ch.col.g, d = p.vx > 0 ? 1 : -1, t = b.frame;
     c.save(); c.translate(p.x, p.y); c.scale(d, 1);
+    const halo = r => { c.globalAlpha = 0.24; c.fillStyle = g; c.beginPath(); c.arc(0, 0, r, 0, PI * 2); c.fill(); c.globalAlpha = 1; }; // 発光の代わり（ぼかし無し）
     switch (p.k) {
       case 'ofuda':
         c.fillStyle = g; c.globalAlpha = 0.35; c.fillRect(-34, -5, 28, 10); c.globalAlpha = 1;
-        c.rotate(Math.sin(t * 0.4 + p.ph) * 0.25); glow(c, g, 12); c.fillStyle = '#fff'; c.fillRect(-13, -8, 26, 16); noGlow(c);
+        halo(20); c.rotate(Math.sin(t * 0.4 + p.ph) * 0.25); c.fillStyle = '#fff'; c.fillRect(-13, -8, 26, 16);
         c.fillStyle = ch.col.a; c.fillRect(-9, -2, 18, 4); c.fillRect(-2, -6, 4, 12); break;
       case 'heart':
-        glow(c, g, 14); c.fillStyle = ch.col.m; c.rotate(Math.sin(t * 0.3) * 0.3); c.beginPath();
-        c.moveTo(0, 12); c.bezierCurveTo(-22, -4, -10, -20, 0, -7); c.bezierCurveTo(10, -20, 22, -4, 0, 12); c.fill(); noGlow(c);
+        halo(24); c.fillStyle = ch.col.m; c.rotate(Math.sin(t * 0.3) * 0.3); c.beginPath();
+        c.moveTo(0, 12); c.bezierCurveTo(-22, -4, -10, -20, 0, -7); c.bezierCurveTo(10, -20, 22, -4, 0, 12); c.fill();
         c.fillStyle = 'rgba(255,255,255,.7)'; c.beginPath(); c.arc(-5, -6, 3, 0, PI * 2); c.fill(); break;
       case 'quake':
-        glow(c, g, 14); c.fillStyle = g;
+        c.fillStyle = g;
         for (let k = 0; k < 4; k++) { const x = -24 + k * 16, h = 18 + ((t * 3 + k * 13) % 26); c.beginPath(); c.moveTo(x - 9, 22); c.lineTo(x, 22 - h); c.lineTo(x + 9, 22); c.fill(); }
-        noGlow(c); c.fillStyle = '#fff'; c.fillRect(-28, 18, 56, 4); break;
+        c.fillStyle = '#fff'; c.fillRect(-28, 18, 56, 4); break;
       case 'wind':
-        glow(c, g, 16); c.strokeStyle = g; c.lineWidth = 7; c.globalAlpha = 0.85;
+        c.strokeStyle = g; c.lineWidth = 16; c.globalAlpha = 0.2; c.beginPath(); c.arc(-34, 0, 50, -0.85, 0.85); c.stroke(); c.lineWidth = 7; c.globalAlpha = 0.85;
         for (let k = 0; k < 3; k++) { c.beginPath(); c.arc(-34 - k * 12, 0, 50, -0.85 + k * 0.12, 0.85 - k * 0.12); c.stroke(); c.globalAlpha *= 0.6; c.lineWidth -= 2; }
-        noGlow(c); c.globalAlpha = 1; c.fillStyle = '#ffc0e0'; for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(-10 + Math.sin(t * 0.3 + k * 2) * 12, -34 + k * 22, 3, 0, PI * 2); c.fill(); } break;
+        c.globalAlpha = 1; c.fillStyle = '#ffc0e0'; for (let k = 0; k < 4; k++) { c.beginPath(); c.arc(-10 + Math.sin(t * 0.3 + k * 2) * 12, -34 + k * 22, 3, 0, PI * 2); c.fill(); } break;
       case 'dragon':
         c.fillStyle = g; for (let k = 1; k < 6; k++) { c.globalAlpha = 0.5 - k * 0.08; c.beginPath(); c.arc(-k * 20, Math.sin(t * 0.4 + k) * 8, 22 - k * 3, 0, PI * 2); c.fill(); }
-        c.globalAlpha = 1; glow(c, g, 20); c.fillStyle = ch.col.m; c.beginPath(); c.moveTo(-28, -22); c.lineTo(36, -14); c.lineTo(14, -2); c.lineTo(36, 14); c.lineTo(-28, 22); c.closePath(); c.fill();
-        c.strokeStyle = g; c.lineWidth = 3; c.stroke(); noGlow(c);
+        c.globalAlpha = 1; halo(40); c.fillStyle = ch.col.m; c.beginPath(); c.moveTo(-28, -22); c.lineTo(36, -14); c.lineTo(14, -2); c.lineTo(36, 14); c.lineTo(-28, 22); c.closePath(); c.fill();
+        c.strokeStyle = g; c.lineWidth = 3; c.stroke();
         c.fillStyle = '#fff'; c.beginPath(); c.arc(-2, -11, 4, 0, PI * 2); c.fill();
         c.strokeStyle = g; c.lineWidth = 3; c.beginPath(); c.moveTo(-22, -22); c.lineTo(-40, -36); c.moveTo(-22, 22); c.lineTo(-40, 36); c.stroke(); break;
       default: // orb
-        glow(c, g, 16); c.fillStyle = '#fff'; c.beginPath(); c.arc(0, 0, 9, 0, PI * 2); c.fill(); noGlow(c);
+        halo(19); c.fillStyle = '#fff'; c.beginPath(); c.arc(0, 0, 9, 0, PI * 2); c.fill();
         c.strokeStyle = g; c.lineWidth = 2.5; c.beginPath(); c.ellipse(0, 0, 16, 6, t * 0.15 + p.ph, 0, PI * 2); c.stroke();
     }
     c.restore();
   }
 
   // ================= エフェクト =================
-  const fx = { parts: [], texts: [], rings: [], shake: 0, flash: 0, cut: null };
+  const fx = { parts: [], texts: [], rings: [], slashes: [], shake: 0, flash: 0, cut: null };
+  const MAX_PARTS = 150; // 粒子の上限（連続ヒットで増え続けないように。超えた分は古いものから捨てる）
+  function part(p) { if (fx.parts.length >= MAX_PARTS) fx.parts.shift(); fx.parts.push(p); }
   function sparks(x, y, col, n, sp) {
-    for (let i = 0; i < n; i++) { const a = Math.random() * PI * 2, v = sp * (0.4 + Math.random()); fx.parts.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1, life: 14 + Math.random() * 14, max: 28, col, s: 2 + Math.random() * 3 }); }
+    for (let i = 0; i < n; i++) { const a = Math.random() * PI * 2, v = sp * (0.4 + Math.random()); part({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v - 1, life: 14 + Math.random() * 14, max: 28, col, s: 2 + Math.random() * 3 }); }
+  }
+  // 足元の土煙（着地・ダッシュ）
+  function dust(x, n, v) {
+    for (let i = 0; i < n; i++) { const d = i % 2 ? 1 : -1; part({ x: x + d * (4 + Math.random() * 10), y: GY - 1, vx: d * (0.8 + Math.random() * v), vy: -0.4 - Math.random() * 1.6, life: 10 + Math.random() * 8, max: 18, col: 'rgba(225,210,255,.75)', s: 3 + Math.random() * 2.5 }); }
   }
   function fxEvent(e, b) {
     switch (e.k) {
       case 'hit': {
         const g = CHARS[b.f[e.s].ci].col.g;
-        sparks(e.x, e.y, '#fff', e.h ? 10 : 5, e.h ? 9 : 6); sparks(e.x, e.y, g, e.h ? 14 : 6, e.h ? 7 : 4);
-        fx.rings.push({ x: e.x, y: e.y, r: 6, vr: e.h ? 7 : 4.5, life: 10, col: g });
-        fx.shake = Math.max(fx.shake, e.h ? 10 : 4); if (e.h) fx.flash = 3;
+        // 弱＝小さな火花と小さな揺れ（従来どおり）。強＝大きな火花・二重の輪・斬撃の閃光・大きな揺れ
+        sparks(e.x, e.y, '#fff', e.h ? 14 : 5, e.h ? 11 : 6); sparks(e.x, e.y, g, e.h ? 18 : 6, e.h ? 8 : 4);
+        fx.rings.push({ x: e.x, y: e.y, r: 6, vr: e.h ? 8 : 4.5, life: 10, col: g });
+        if (e.h) {
+          fx.rings.push({ x: e.x, y: e.y, r: 2, vr: 13, life: 9, col: '#fff' });
+          const a = -0.75 + Math.random() * 0.5, d = e.s ? -1 : 1;
+          fx.slashes.push({ x: e.x, y: e.y, a: d > 0 ? a : PI - a, len: 190, life: 10, max: 10, col: g }, { x: e.x, y: e.y, a: (d > 0 ? a : PI - a) + 1.25 * d, len: 120, life: 8, max: 8, col: '#fff' });
+        }
+        fx.shake = Math.max(fx.shake, e.h ? 16 : 4); if (e.h) fx.flash = 4;
         if (e.c >= 2) { fx.texts = fx.texts.filter(t => t.kind !== 'combo' + e.s); fx.texts.push({ kind: 'combo' + e.s, x: e.s ? 800 : 160, y: 150, str: e.c + ' HITS', life: 70, col: '#ffd447', size: 34 }); }
         if (e.h && e.sp) fx.texts.push({ x: e.x, y: e.y - 30, str: 'HI IMPACT', life: 40, col: '#ff8a3d', size: 22, rise: 1 });
         break;
@@ -627,14 +769,17 @@
       case 'sp': { const ch = CHARS[b.f[e.s].ci]; fx.rings.push({ x: e.x, y: e.y, r: 10, vr: 9, life: 14, col: ch.col.g }); fx.cut = { s: e.s, str: ch.sp.name, col: ch.col.g, life: 60 }; break; }
       case 'warp': sparks(e.x, e.y, '#3dff9a', 10, 5); break;
       case 'shot': fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 5, life: 8, col: CHARS[b.f[e.s].ci].col.g }); break;
-      case 'dash': for (let i = 0; i < 5; i++) fx.parts.push({ x: e.x, y: GY, vx: (Math.random() - 0.5) * 4, vy: -Math.random() * 2, life: 14, max: 14, col: 'rgba(220,200,255,.8)', s: 4 }); break;
+      case 'dash': dust(e.x, 5, 2); break;
+      case 'sw': if (e.v === 1) dust(e.x, 4, 2.5); break; // ダッシュ攻撃の踏み切り
+      case 'land': dust(e.x, e.h ? 10 : 6, e.h ? 4 : 2.8); fx.shake = Math.max(fx.shake, e.h ? 6 : 2.5); break; // 落下攻撃の着地
       case 'ko': fx.shake = 16; fx.flash = 6; break;
     }
   }
-  function fxClear() { fx.parts.length = 0; fx.texts.length = 0; fx.rings.length = 0; fx.shake = 0; fx.flash = 0; fx.cut = null; }
+  function fxClear() { fx.parts.length = 0; fx.texts.length = 0; fx.rings.length = 0; fx.slashes.length = 0; fx.shake = 0; fx.flash = 0; fx.cut = null; }
   function fxTick() {
     for (let i = fx.parts.length - 1; i >= 0; i--) { const p = fx.parts[i]; p.x += p.vx; p.y += p.vy; p.vy += 0.35; if (--p.life <= 0) fx.parts.splice(i, 1); }
     for (let i = fx.rings.length - 1; i >= 0; i--) { const r = fx.rings[i]; r.r += r.vr; if (--r.life <= 0) fx.rings.splice(i, 1); }
+    for (let i = fx.slashes.length - 1; i >= 0; i--) { if (--fx.slashes[i].life <= 0) fx.slashes.splice(i, 1); }
     for (let i = fx.texts.length - 1; i >= 0; i--) { const t = fx.texts[i]; if (t.rise) t.y -= 0.8; if (--t.life <= 0) fx.texts.splice(i, 1); }
     if (fx.shake > 0) fx.shake *= 0.82; if (fx.shake < 0.4) fx.shake = 0;
     if (fx.flash > 0) fx.flash--;
@@ -642,6 +787,13 @@
   }
   function drawFx(c) {
     for (const r of fx.rings) { c.globalAlpha = r.life / 12; c.strokeStyle = r.col; c.lineWidth = 4; c.beginPath(); c.arc(r.x, r.y, r.r, 0, PI * 2); c.stroke(); }
+    c.lineCap = 'round';
+    for (const q of fx.slashes) { // 強ヒットの斬撃の閃光：伸びながら細く消える線
+      const u = q.life / q.max, h = q.len * (0.55 + 0.45 * (1 - u)) / 2, cx = Math.cos(q.a) * h, cy = Math.sin(q.a) * h;
+      c.strokeStyle = q.col; c.globalAlpha = 0.35 * u; c.lineWidth = 20 * u; c.beginPath(); c.moveTo(q.x - cx, q.y - cy); c.lineTo(q.x + cx, q.y + cy); c.stroke();
+      c.strokeStyle = '#fff'; c.globalAlpha = Math.min(1, u * 1.4); c.lineWidth = 6 * u; c.beginPath(); c.moveTo(q.x - cx, q.y - cy); c.lineTo(q.x + cx, q.y + cy); c.stroke();
+    }
+    c.lineCap = 'butt';
     for (const p of fx.parts) { c.globalAlpha = Math.min(1, p.life / 10); c.fillStyle = p.col; c.fillRect(p.x - p.s / 2, p.y - p.s / 2, p.s, p.s); }
     c.globalAlpha = 1;
     for (const t of fx.texts) { c.globalAlpha = Math.min(1, t.life / 14); text(c, t.str, t.x, t.y, t.size, t.col, 'center', true); }
@@ -649,22 +801,44 @@
   }
 
   // ================= テキスト / HUD =================
+  // 文字は縁取りつきで一度だけオフスクリーンに描いてキャッシュし、以後は貼るだけ（strokeText・発光を毎フレーム実行しない）。
+  // 注意：呼び出し側の c.font は変更しない
   function text(c, s, x, y, px, col, align, it, strokeCol) {
-    c.font = font(px, it); c.textAlign = align || 'left'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-    c.strokeStyle = strokeCol || 'rgba(8,2,24,.92)'; c.lineWidth = Math.max(3, px * 0.18); c.strokeText(s, x, y);
-    c.fillStyle = col || '#fff'; c.fillText(s, x, y);
+    s = String(s); if (!s) return;
+    col = col || '#fff';
+    const e = sprite('t' + px + (it ? 'i' : 'n') + col + '|' + (strokeCol || '') + '|' + s, () => {
+      MC.font = font(px, it);
+      const w = MC.measureText(s).width, lw = Math.max(3, px * 0.18), pad = Math.ceil(lw / 2 + px * 0.3) + 1, mid = Math.ceil(px * 0.75) + pad;
+      const sp = mkSprite(w + pad * 2, mid * 2, q => {
+        q.font = font(px, it); q.textAlign = 'left'; q.textBaseline = 'middle'; q.lineJoin = 'round';
+        q.strokeStyle = strokeCol || 'rgba(8,2,24,.92)'; q.lineWidth = lw; q.strokeText(s, pad, mid); q.fillStyle = col; q.fillText(s, pad, mid);
+      });
+      sp.w = w; sp.pad = pad; sp.mid = mid; return sp;
+    });
+    blit(c, e, x - e.pad - (align === 'center' ? e.w / 2 : align === 'right' ? e.w : 0), y - e.mid);
   }
   function neonText(c, s, x, y, px, col, align) {
-    c.font = font(px, true); c.textAlign = align || 'center'; c.textBaseline = 'middle';
-    glow(c, col, px * 0.45); c.fillStyle = col; c.fillText(s, x, y); noGlow(c);
-    c.fillStyle = '#fff'; c.globalAlpha *= 0.9; c.fillText(s, x, y - 1); c.globalAlpha /= 0.9;
+    s = String(s); if (!s) return;
+    const e = sprite('n' + px + col + '|' + s, () => {
+      MC.font = font(px, true);
+      const w = MC.measureText(s).width, blur = px * 0.45, pad = Math.ceil(blur * 2.2 + px * 0.2), mid = Math.ceil(px * 0.75) + pad;
+      const sp = mkSprite(w + pad * 2, mid * 2, q => {
+        q.font = font(px, true); q.textAlign = 'left'; q.textBaseline = 'middle';
+        glow(q, col, blur); q.fillStyle = col; q.fillText(s, pad, mid); noGlow(q);
+        q.fillStyle = '#fff'; q.globalAlpha = 0.9; q.fillText(s, pad, mid - 1);
+      });
+      sp.w = w; sp.pad = pad; sp.mid = mid; return sp;
+    });
+    align = align || 'center';
+    blit(c, e, x - e.pad - (align === 'center' ? e.w / 2 : align === 'right' ? e.w : 0), y - e.mid);
   }
+  const GR = {}; // HP バーのグラデーション（毎フレーム作らない）
   function bar(c, x, y, w, h, frac, ghost, right, c0, c1) {
     const sk = 8, shape = (x0, x1) => { c.beginPath(); c.moveTo(x0 + sk, y); c.lineTo(x1 + sk, y); c.lineTo(x1, y + h); c.lineTo(x0, y + h); c.closePath(); };
     c.fillStyle = 'rgba(8,2,24,.8)'; shape(x - 2, x + w + 2); c.fill();
     const seg = fr => (right ? [x + w * (1 - fr), x + w] : [x, x + w * fr]);
     if (ghost > frac) { c.fillStyle = '#fff3b0'; const s = seg(ghost); shape(s[0], s[1]); c.fill(); }
-    if (frac > 0) { const g = c.createLinearGradient(x, 0, x + w, 0); g.addColorStop(0, right ? c1 : c0); g.addColorStop(1, right ? c0 : c1); c.fillStyle = g; const s = seg(frac); shape(s[0], s[1]); c.fill(); c.fillStyle = 'rgba(255,255,255,.28)'; c.fillRect(s[0] + sk, y + 1, Math.max(0, s[1] - s[0] - 2), h * 0.3); }
+    if (frac > 0) { const gk = x + '|' + w + '|' + (right ? 1 : 0) + c0 + c1; let g = GR[gk]; if (!g) { g = GR[gk] = c.createLinearGradient(x, 0, x + w, 0); g.addColorStop(0, right ? c1 : c0); g.addColorStop(1, right ? c0 : c1); } c.fillStyle = g; const s = seg(frac); shape(s[0], s[1]); c.fill(); c.fillStyle = 'rgba(255,255,255,.28)'; c.fillRect(s[0] + sk, y + 1, Math.max(0, s[1] - s[0] - 2), h * 0.3); }
     c.strokeStyle = 'rgba(255,255,255,.85)'; c.lineWidth = 1.5; shape(x - 2, x + w + 2); c.stroke();
   }
   // view: { ghost:[hp,hp], labels:[str,str] }
@@ -713,14 +887,22 @@
     const k = Math.min(1, u * 4);
     c.save(); c.translate(480, 232); c.rotate(-0.06); c.scale(1.7 - 0.7 * k, 1.7 - 0.7 * k);
     c.fillStyle = 'rgba(8,2,24,.85)'; c.beginPath(); c.moveTo(-190, -20); c.lineTo(170, -52); c.lineTo(196, 30); c.lineTo(-160, 52); c.closePath(); c.fill();
-    c.font = font(96, true); c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
-    c.strokeStyle = '#fff'; c.lineWidth = 12; c.strokeText(s, 0, 0); glow(c, '#ff3d3d', 18); c.fillStyle = '#e8102e'; c.fillText(s, 0, 0); noGlow(c);
+    const e = sprite('splash|' + s, () => {
+      MC.font = font(96, true); const w = MC.measureText(s).width, pad = 48, mid = 72 + pad;
+      const sp = mkSprite(w + pad * 2, mid * 2, q => {
+        q.font = font(96, true); q.textAlign = 'left'; q.textBaseline = 'middle'; q.lineJoin = 'round';
+        q.strokeStyle = '#fff'; q.lineWidth = 12; q.strokeText(s, pad, mid); glow(q, '#ff3d3d', 18); q.fillStyle = '#e8102e'; q.fillText(s, pad, mid); noGlow(q);
+      });
+      sp.w = w; sp.pad = pad; sp.mid = mid; return sp;
+    });
+    c.drawImage(e.cv, -e.pad - e.w / 2, -e.mid, e.lw, e.lh);
     c.restore();
   }
 
   const landMem = [{ y: GY, at: -99, frame: 0 }, { y: GY, at: -99, frame: 0 }];
   function drawBattle(c, b, view, T) {
-    const sx = fx.shake ? (Math.random() - 0.5) * fx.shake * 2 : 0, sy = fx.shake ? (Math.random() - 0.5) * fx.shake : 0;
+    // 揺れは実ピクセル単位に丸める（背景を等倍のまま貼れるように）
+    const sx = fx.shake ? Math.round((Math.random() - 0.5) * fx.shake * 2 * SC) / SC : 0, sy = fx.shake ? Math.round((Math.random() - 0.5) * fx.shake * SC) / SC : 0;
     c.save(); c.translate(sx, sy);
     drawStage(c, T, 0);
     drawShadow(c, b.f[0]); drawShadow(c, b.f[1]);
@@ -729,14 +911,14 @@
     for (let i = 0; i < 2; i++) {
       const f = b.f[i], mem = landMem[i];
       if (b.frame < mem.frame) mem.at = -99;
-      if (mem.y < GY && f.y >= GY && b.frame > mem.frame) mem.at = b.frame;
+      if (mem.y < GY && f.y >= GY && b.frame > mem.frame) { mem.at = b.frame; if (f.st !== 'atk' && f.st !== 'ko' && b.frame - mem.frame < 4) dust(f.x, 6, 2.2); } // 着地の小さな土煙（落下攻撃は sim のイベント側で出す）
       mem.y = f.y; mem.frame = b.frame;
       const d = b.frame - mem.at; land[i] = d <= 1 ? 1 : d === 2 ? 0.5 : 0;
     }
     // 攻撃中の側を手前に描く
     const front = b.f[1].st === 'atk' ? 1 : 0;
-    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front] });
-    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front] });
+    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front], slot: 1 - front, frame: b.frame });
+    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front], slot: front, frame: b.frame });
     for (const p of b.p) drawProj(c, p, b);
     drawFx(c); drawPetals(c, T);
     c.restore();
@@ -758,8 +940,8 @@
       // 顔寄りの絵をセルに cover フィット（上寄せ）。ロック中は黒く伏せたシルエットにする
       const pw = por.im.naturalWidth, ph = por.im.naturalHeight, k = Math.max(w / pw, h / ph), dw = pw * k, dh = ph * k;
       const bob = o.locked ? 0 : Math.sin((o.t || 0) * 0.09) * 2;
-      c.imageSmoothingQuality = 'high';
-      c.drawImage(o.locked ? tinted(por, '#05030a') : por.im, x + (w - dw) / 2, y + bob + 2, dw, dh);
+      const zz = Math.abs(c.getTransform().a); // 実ピクセルの大きさに縮小済みのキャッシュを貼る
+      c.drawImage(scaled(por, dh * zz, o.locked ? '#05030a' : null), x + (w - dw) / 2, y + bob + 2, dw, dh);
       const ng = c.createLinearGradient(0, y + h - 46, 0, y + h); ng.addColorStop(0, 'rgba(8,2,24,0)'); ng.addColorStop(0.6, 'rgba(8,2,24,.78)'); ng.addColorStop(1, 'rgba(8,2,24,.92)');
       c.fillStyle = ng; c.fillRect(x, y + h - 46, w, 46); // 名前の帯
     } else {
@@ -771,10 +953,10 @@
     if (o.locked) { text(c, '？', x + w / 2, y + h * 0.42, h * 0.3, '#8d86b3', 'center'); text(c, 'LOCKED', x + w / 2, y + h - 12, 12, '#8d86b3', 'center', true); }
     else text(c, ch.name, x + w / 2, y + h - 12, o.nameSize || 15, '#fff', 'center');
     c.restore();
-    if (o.sel) glow(c, o.selCol || '#ffd447', 16);
-    c.strokeStyle = o.sel ? (o.selCol || '#ffd447') : col; c.lineWidth = o.sel ? 4 : 2; c.strokeRect(x, y, w, h); noGlow(c);
+    if (o.sel) { c.strokeStyle = o.selCol || '#ffd447'; c.globalAlpha = 0.22; c.lineWidth = 12; c.strokeRect(x, y, w, h); c.globalAlpha = 1; } // 選択中の発光（ぼかし無し）
+    c.strokeStyle = o.sel ? (o.selCol || '#ffd447') : col; c.lineWidth = o.sel ? 4 : 2; c.strokeRect(x, y, w, h);
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
 })();

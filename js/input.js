@@ -7,7 +7,7 @@
     ArrowLeft: K.L, ArrowRight: K.R, ArrowUp: K.U, ArrowDown: K.D, KeyA: K.L, KeyD: K.R, KeyW: K.U, KeyS: K.D,
     KeyJ: K.A, KeyK: K.H, KeyL: K.S, KeyU: K.G, KeyQ: K.DL, KeyE: K.DR, Enter: OK, Space: OK, Escape: BACK,
   };
-  const I = { keys: 0, pad: 0, OK, BACK, onTap: null, onMenu: null, onMute: null, onDigit: null, onGesture: null,
+  const I = { keys: 0, pad: 0, OK, BACK, onTap: null, onMenu: null, onMute: null, onDigit: null, onGesture: null, onFps: null, hitTest: null,
     latch: 0,
     // 押下はラッチしておき、フレームの合間に押して離した短いタップも必ず1フレーム分は拾う
     mask() { const m = this.keys | this.pad | this.latch; this.latch = 0; return m; } };
@@ -16,6 +16,7 @@
     if (I.onGesture) I.onGesture();
     if (e.code === 'KeyM') { if (!e.repeat && I.onMute) I.onMute(); return; }
     if (e.code === 'KeyP') { if (!e.repeat) document.body.classList.toggle('nopad'); return; }
+    if (e.code === 'KeyF') { if (!e.repeat && I.onFps) I.onFps(); return; }
     if (/^(Digit|Numpad)\d$/.test(e.code)) { if (I.onDigit) I.onDigit(+e.code.slice(-1)); return; }
     if (e.code === 'Backspace') { if (I.onDigit) I.onDigit(-1); e.preventDefault(); return; }
     const b = KEYS[e.code]; if (b) { if (!e.repeat) I.latch |= b; I.keys |= b; e.preventDefault(); }
@@ -30,29 +31,41 @@
   const faces = [...document.querySelectorAll('.fb')].map(el => ({ el, bit: K[el.dataset.b] }));
   const shoulders = [{ el: $('bL'), bit: K.DL }, { el: $('bR'), bit: K.DR }];
   const ptrs = new Map();
-  function hitTest(x, y) {
-    let r = dpad.getBoundingClientRect();
-    if (r.width) {
-      const cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2, dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
-      if (d < R * 1.15) {
-        if (d < R * 0.16) return { bits: 0, els: [] };
-        const a = Math.atan2(dy, dx), oct = Math.round(a / (Math.PI / 4)); // -4..4
-        const bits = [K.R, K.R | K.D, K.D, K.D | K.L, K.L, K.L | K.U, K.U, K.U | K.R][((oct % 8) + 8) % 8];
-        return { bits, els: Object.keys(arrows).filter(b => bits & b).map(b => arrows[b]) };
-      }
+  // 十字キー：見えている矢印（.da）の四角の中は必ずその方向だけ。四角の外（すき間）は角度で決め、
+  // 上下左右を各70°、斜めを各20°にする（8等分だと「上」を少し外しただけで斜めジャンプに化けるため）。中心 0.22R は不感帯。
+  const DIRS = [[K.R, 0], [K.D, 90], [K.L, 180], [K.U, 270]], CARD = 35; // CARD = カーディナルの半角（度）
+  function dpadBits(x, y) {
+    const r = dpad.getBoundingClientRect(); if (!r.width) return -1;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2, dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+    if (d >= R * 1.15) return -1;
+    if (d < R * 0.22) return 0;
+    for (const b in arrows) { const q = arrows[b].getBoundingClientRect(); if (x >= q.left && x <= q.right && y >= q.top && y <= q.bottom) return +b; }
+    const a = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
+    let bits = 0, best = 0, bd = 999;
+    for (const [bit, ang] of DIRS) {
+      const df = Math.abs(((a - ang + 540) % 360) - 180);
+      if (df <= CARD) return bit;
+      if (df < 90 - CARD) bits |= bit; // 斜めの20°帯（隣り合う2方向の両方から 35°超〜55°未満）
+      if (df < bd) { bd = df; best = bit; }
     }
+    return bits || best;
+  }
+  // 丸ボタンと L/R：見た目より広く拾う（丸＝半径+8px 以上、L/R＝外側に12px）。範囲が重なったら中心に近い方
+  function hitTest(x, y) {
+    const db = dpadBits(x, y);
+    if (db >= 0) return { bits: db, els: Object.keys(arrows).filter(b => db & b).map(b => arrows[b]) };
     let best = null, bd = 1e9;
     for (const f of faces) {
-      r = f.el.getBoundingClientRect(); if (!r.width) continue;
+      const r = f.el.getBoundingClientRect(); if (!r.width) continue;
       const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
-      if (d < r.width * 0.68 && d < bd) { bd = d; best = f; }
+      if (d < Math.max(r.width * 0.7, r.width / 2 + 8) && d < bd) { bd = d; best = f; }
     }
-    if (best) return { bits: best.bit, els: [best.el] };
     for (const s of shoulders) {
-      r = s.el.getBoundingClientRect(); if (!r.width) continue;
-      if (x > r.left - 8 && x < r.right + 8 && y > r.top - 8 && y < r.bottom + 10) return { bits: s.bit, els: [s.el] };
+      const r = s.el.getBoundingClientRect(); if (!r.width) continue;
+      const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
+      if (x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12 && d < bd) { bd = d; best = s; }
     }
-    return null;
+    return best ? { bits: best.bit, els: [best.el] } : null;
   }
   const all = [...Object.values(arrows), ...faces.map(f => f.el), ...shoulders.map(s => s.el)];
   function recompute() {
@@ -66,9 +79,15 @@
   addEventListener('pointerdown', e => {
     if (I.onGesture) I.onGesture();
     if (document.body.classList.contains('portrait')) return;
-    if (inside($('bMute'), e)) { if (I.onMute) I.onMute(); e.preventDefault(); return; }
-    if (inside($('bMenu'), e)) { if (I.onMenu) I.onMenu(); e.preventDefault(); return; }
-    if (!document.body.classList.contains('nopad') && hitTest(e.clientX, e.clientY)) {
+    const pad = !document.body.classList.contains('nopad'), hit = pad ? hitTest(e.clientX, e.clientY) : null;
+    for (const [id, fn] of [['bMute', I.onMute], ['bMenu', I.onMenu]]) {
+      if (!inside($(id), e)) continue;
+      // すぐ上の L/R の広げた当たり判定と重なる所は、中心に近い方を採る
+      const sh = hit && hit.els[0] && hit.els[0].classList.contains('sb') ? hit.els[0].getBoundingClientRect() : null, r = $(id).getBoundingClientRect();
+      if (sh && Math.hypot(e.clientX - sh.left - sh.width / 2, e.clientY - sh.top - sh.height / 2) < Math.hypot(e.clientX - r.left - r.width / 2, e.clientY - r.top - r.height / 2)) break;
+      if (fn) fn(); e.preventDefault(); return;
+    }
+    if (hit) {
       ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); recompute(); e.preventDefault(); return;
     }
     const r = cv.getBoundingClientRect();
@@ -82,5 +101,6 @@
   for (const ev of ['contextmenu', 'gesturestart', 'dblclick', 'selectstart']) addEventListener(ev, e => e.preventDefault());
   addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
+  I.hitTest = hitTest; // 自動確認用
   N.Input = I;
 })();
