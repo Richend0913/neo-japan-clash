@@ -22,7 +22,7 @@
     im.src = src; return e;
   }
   load('stage', 'assets/stage.webp');
-  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.png`); load('p:' + id, `assets/portraits/${id}.png`); }
+  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.webp`); load('p:' + id, `assets/portraits/${id}.webp`); }
   const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
   const spriteOf = ci => ready('s:' + CHARS[ci].id), portraitOf = ci => ready('p:' + CHARS[ci].id);
   // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
