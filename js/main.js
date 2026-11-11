@@ -298,7 +298,7 @@
     if (!Net.available()) { A.play('ng'); toastMsg('オンラインは server.js を起動して http://<ホスト>:8902/ で開くと使えます', 260); return; }
     go(Select({ title: 'オンライン対戦：使用キャラを選択', onBack: toTitle, onPick(ci) { on.ci = ci; go(OnlineMenu()); } }));
   }
-  function connectThen(fn) { toastMsg('サーバーに接続中…', 60); Net.connect().then(fn).catch(() => { A.play('ng'); toastMsg(location.hostname.endsWith('github.io') ? 'オンライン対戦は準備中です（アーケード／フリーバトルは遊べます）' : 'サーバーに接続できませんでした'); }); }
+  function connectThen(fn) { toastMsg('サーバーに接続中…', 60); Net.connect().then(fn).catch(() => { A.play('ng'); toastMsg(!/^(localhost|127[.]0[.]0[.]1)$/.test(location.hostname) ? 'オンライン対戦は準備中です（アーケード／フリーバトルは遊べます）' : 'サーバーに接続できませんでした'); }); }
   function OnlineMenu() {
     return Menu('ONLINE', [['ルームを作成（4桁コード発行）', () => connectThen(() => Net.send({ t: 'create', ci: on.ci }))], ['コードで参加', () => go(CodeEntry())], ['もどる', startOnline, 'back']], startOnline,
       { kind: 'online', sub: `使用キャラ：${CHARS[on.ci].name}　｜　最大4人・1対1の勝ち抜き戦（待機中は観戦）` });
