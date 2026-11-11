@@ -1,4 +1,5 @@
-// NEO JAPAN CLASH — 描画（ステージ / ファイター / 飛び道具 / エフェクト / HUD）。すべて canvas ベクター描画
+// NEO JAPAN CLASH — 描画（ステージ / ファイター / 飛び道具 / エフェクト / HUD）。
+// ステージとキャラは assets/ の画像（スプライト）を使い、画像が無い・未ロードの間は canvas ベクター描画にフォールバックする
 (function () {
   'use strict';
   const N = window.NJC, CHARS = N.CHARS, GY = N.GY;
@@ -8,6 +9,49 @@
   const glow = (c, col, blur) => { c.shadowColor = col; c.shadowBlur = blur; };
   const noGlow = c => { c.shadowBlur = 0; c.shadowColor = 'transparent'; };
   let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+
+  // ================= 画像アセット =================
+  // スプライト素材（assets/sprites/<id>.png と assets/portraits/<id>.png）があるキャラの一覧。素材を追加したらここに id を足す。
+  // 一覧に無いキャラは読み込みを試みず、ベクター描画のままになる（存在しない画像への 404 を出さないため）。
+  // 体の中心（立ち位置の基準）は画像の不透明部分の重心から自動で決める。ずれるキャラは { ax: 0〜1 } で上書きできる。
+  const ART = { zanrai: {}, mikoto: {}, kagemaru: {}, gounen: {}, konko: {}, raidenzan: {}, shuki: {}, shion: {}, ougi: {}, nishiki: {}, kurotengu: {} };
+  const IMG = {};
+  function load(key, src) { // 相対パス（GitHub Pages のサブパス配下でも動く）
+    const im = new Image(), e = IMG[key] = { im, ok: false, bad: false, tint: {} };
+    im.onload = () => { e.ok = im.naturalWidth > 0; }; im.onerror = () => { e.bad = true; };
+    im.src = src; return e;
+  }
+  load('stage', 'assets/stage.webp');
+  for (const id in ART) { load('s:' + id, `assets/sprites/${id}.png`); load('p:' + id, `assets/portraits/${id}.png`); }
+  const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
+  const spriteOf = ci => ready('s:' + CHARS[ci].id), portraitOf = ci => ready('p:' + CHARS[ci].id);
+  // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
+  function anchorX(e, id) {
+    if (e.ax != null) return e.ax;
+    let ax = ART[id].ax;
+    if (ax == null) {
+      ax = 0.45;
+      try {
+        const w = 48, h = 48, cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+        const x = cv.getContext('2d'); x.drawImage(e.im, 0, 0, w, h);
+        const d = x.getImageData(0, 0, w, h).data; let sum = 0, mom = 0;
+        for (let i = 0; i < w * h; i++) { const a = d[i * 4 + 3]; sum += a; mom += a * ((i % w) + 0.5); }
+        if (sum > 0) ax = mom / sum / w;
+      } catch (err) { /* file:// など画素を読めない環境では既定値のまま */ }
+    }
+    return (e.ax = ax);
+  }
+  // 画像の形のまま単色で塗ったもの（被弾の白フラッシュ・ロック中の伏せ絵に使う）
+  function tinted(e, col) {
+    if (!e.tint[col]) {
+      const cv = document.createElement('canvas'); cv.width = e.im.naturalWidth; cv.height = e.im.naturalHeight;
+      const x = cv.getContext('2d'); x.drawImage(e.im, 0, 0); x.globalCompositeOperation = 'source-in'; x.fillStyle = col; x.fillRect(0, 0, cv.width, cv.height);
+      e.tint[col] = cv;
+    }
+    return e.tint[col];
+  }
+  const clamp01 = v => Math.max(0, Math.min(1, v));
+  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), portraits: Object.keys(ART).filter(id => ready('p:' + id)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
 
   // ================= ステージ =================
   let stageCv = null;
@@ -117,10 +161,17 @@
   for (let i = 0; i < 44; i++) petals.push({ x: Math.random() * W, y: Math.random() * HH, s: 3 + Math.random() * 4, vx: -0.5 - Math.random() * 1.1, vy: 0.5 + Math.random() * 0.9, r: Math.random() * 6, vr: (Math.random() - 0.5) * 0.12 });
   for (let i = 0; i < 26; i++) holos.push({ x: Math.random() * W, y: Math.random() * HH, s: 2 + Math.random() * 3, vy: -0.25 - Math.random() * 0.6, ph: Math.random() * 6 });
   function drawStage(c, t, dim) {
-    if (!stageCv) stageCv = buildStage();
-    c.drawImage(stageCv, 0, 0);
-    // 提灯（ゆらぎ発光）
-    for (let i = 0; i < lanterns.length; i++) {
+    const st = ready('stage');
+    if (st) {
+      // 背景画像を 960x540 に cover フィット（はみ出す側を中央基準で切る）
+      const iw = st.im.naturalWidth, ih = st.im.naturalHeight, k = Math.max(W / iw, HH / ih), sw = W / k, sh = HH / k;
+      c.drawImage(st.im, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, W, HH);
+    } else {
+      if (!stageCv) stageCv = buildStage();
+      c.drawImage(stageCv, 0, 0);
+    }
+    // 提灯（ゆらぎ発光）※ベクター背景のときだけ。画像背景には提灯が描き込まれている
+    for (let i = 0; !st && i < lanterns.length; i++) {
       const [x, y] = lanterns[i], fl = 0.75 + 0.25 * Math.sin(t * 0.05 + i * 1.7);
       c.fillStyle = `rgba(255,120,70,${0.16 * fl})`; c.beginPath(); c.arc(x, y, 30, 0, PI * 2); c.fill();
       c.fillStyle = `rgb(${220 + 35 * fl | 0},${60 + 50 * fl | 0},50)`; c.beginPath(); c.ellipse(x, y, 11, 15, 0, 0, PI * 2); c.fill();
@@ -322,8 +373,7 @@
     }
   }
 
-  function drawFighter(c, f, o) {
-    o = o || {};
+  function drawFighterVec(c, f, o) {
     const ch = CHARS[f.ci], b = ch.b, sc = b.sc || 1, sil = !!o.sil;
     const C = k => (sil ? '#05030a' : ch.col[k]);
     const hairC = sil ? '#05030a' : (b.hair || ch.col.a);
@@ -391,38 +441,102 @@
     if (b.sleeves) { poly([eF.x, eF.y, hF.x, hF.y, hF.x - 5, hF.y + 24 + sway, eF.x - 6, eF.y + 12], C('m')); if (!sil) line({ x: hF.x, y: hF.y + 2 }, { x: hF.x - 5, y: hF.y + 24 + sway }, C('a'), 2.5); }
     drawWeapon(c, b.weapon, hF, p.w, C, sil);
     if (b.weapon === 'gohei' && !sil) for (let k = 0; k < 3; k++) { const a = t * 0.05 + k * 2.1; c.save(); c.translate(sh.x - 6 + Math.cos(a) * 30, sh.y - 6 + Math.sin(a * 1.3) * 16); c.rotate(Math.sin(a) * 0.4); glow(c, C('g'), 8); c.fillStyle = 'rgba(255,255,255,.9)'; c.fillRect(-4, -7, 8, 14); c.fillStyle = C('a'); c.fillRect(-1, -4, 2, 8); noGlow(c); c.restore(); }
-    // 斬撃・ビームの軌跡
-    if (m && !sil && t > m.su && t <= m.su + m.ac + 3) {
-      const u = 1 - (t - m.su) / (m.ac + 4), ty = f.atk === 's' ? m.type : '';
+    if (m && !sil) drawAtkFx(c, f, m, C('g'), alpha, { hx: hF.x, hy: hF.y, cy: sh.y + 10, R: m.rng / sc * 0.96, ay: hip.y - 14, k: 1 });
+    c.restore();
+  }
+  // 斬撃の弧・ビーム・必殺技の溜めオーラ（ベクター／スプライト共通。向きを反転済みの座標系で呼ぶ）
+  // geo: hx,hy=手元  cy=弧の中心の高さ  R=弧の半径  ay=オーラ中心の高さ  k=太さなどの倍率
+  function drawAtkFx(c, f, m, g, alpha, geo) {
+    const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k;
+    if (t > m.su && t <= m.su + m.ac + 3) {
+      const u = 1 - (t - m.su) / (m.ac + 4);
       if (ty === 'beam') {
         if (t <= m.su + m.ac) {
-          const hgt = 13 + Math.sin(t * 1.7) * 4;
-          glow(c, C('g'), 20); c.fillStyle = C('g'); c.fillRect(hF.x + 20, hF.y - hgt / 2, 900, hgt);
-          c.fillStyle = '#fff'; c.fillRect(hF.x + 20, hF.y - hgt / 5, 900, hgt / 2.5); noGlow(c);
-          c.strokeStyle = C('g'); c.lineWidth = 2; for (let k = 0; k < 3; k++) { c.beginPath(); c.arc(hF.x + 26 + k * 16, hF.y, 12 + k * 7 + (t % 4), 0, PI * 2); c.stroke(); }
+          const hgt = (13 + Math.sin(t * 1.7) * 4) * k;
+          glow(c, g, 20); c.fillStyle = g; c.fillRect(geo.hx + 20, geo.hy - hgt / 2, 900, hgt);
+          c.fillStyle = '#fff'; c.fillRect(geo.hx + 20, geo.hy - hgt / 5, 900, hgt / 2.5); noGlow(c);
+          c.strokeStyle = g; c.lineWidth = 2; for (let n = 0; n < 3; n++) { c.beginPath(); c.arc(geo.hx + 26 + n * 16, geo.hy, 12 + n * 7 + (t % 4), 0, PI * 2); c.stroke(); }
         }
       } else if (m.dmg > 0) {
-        const R = m.rng / sc * 0.96, cy = sh.y + 10;
         let a0 = -0.5, a1 = 0.45;
         if (f.atk === 'h' || ty === 'quake') { a0 = -1.35; a1 = 0.6; } else if (ty === 'upper') { a0 = -1.5; a1 = 0.7; } else if (ty) { a0 = -0.8; a1 = 0.7; }
         if (f.air || ty === 'dive') { a0 = -0.2; a1 = 1.3; }
-        c.globalAlpha = alpha * Math.max(0, u); glow(c, C('g'), 14);
-        c.strokeStyle = C('g'); c.lineWidth = ty ? 13 : 8; c.beginPath(); c.arc(0, cy, R, a0, a1); c.stroke();
-        c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.beginPath(); c.arc(0, cy, R + 2, a0 + 0.1, a1 - 0.1); c.stroke(); noGlow(c);
+        c.globalAlpha = alpha * Math.max(0, u); glow(c, g, 14);
+        c.strokeStyle = g; c.lineWidth = (ty ? 13 : 8) * k; c.beginPath(); c.arc(0, geo.cy, geo.R, a0, a1); c.stroke();
+        c.strokeStyle = '#fff'; c.lineWidth = 2.5 * k; c.beginPath(); c.arc(0, geo.cy, geo.R + 2, a0 + 0.1, a1 - 0.1); c.stroke(); noGlow(c);
         c.globalAlpha = alpha;
       }
     }
-    // 必殺技の溜めオーラ
-    if (m && f.atk === 's' && !sil && t <= m.su) {
-      c.globalAlpha = 0.55; glow(c, C('g'), 16); c.strokeStyle = C('g'); c.lineWidth = 3;
-      c.beginPath(); c.ellipse(0, hip.y - 14, 36 + (m.su - t) * 1.6, 62 + (m.su - t) * 1.6, 0, 0, PI * 2); c.stroke(); noGlow(c);
+    if (f.atk === 's' && t <= m.su) {
+      c.globalAlpha = 0.55; glow(c, g, 16); c.strokeStyle = g; c.lineWidth = 3;
+      c.beginPath(); c.ellipse(0, geo.ay, (36 + (m.su - t) * 1.6) * k, (62 + (m.su - t) * 1.6) * k, 0, 0, PI * 2); c.stroke(); noGlow(c);
     }
+  }
+
+  // ---- スプライト描画（1枚絵 + 手続きアニメーション。動きは sim の状態だけから決める） ----
+  // 表示の高さは体格 b.sc に比例（sc 0.9→250px 〜 1.15→340px）
+  const spriteH = ch => Math.max(250, Math.min(340, 250 + ((ch.b.sc || 1) - 0.9) / 0.25 * 90));
+  function drawSprite(c, f, o, e) {
+    const ch = CHARS[f.ci], im = e.im, t = f.t, st = f.st, g = ch.col.g;
+    const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
+    const m = st === 'atk' ? N.mv(ch, f.atk) : null, ty = m && f.atk === 's' ? m.type : '';
+    const fw = (f.vx >= 0 ? 1 : -1) === f.face; // 前進中か
+    // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数
+    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, alpha = o.alpha == null ? 1 : o.alpha;
+    switch (st) {
+      case 'walk': rot = fw ? 0.06 : -0.045; dy = -Math.abs(Math.sin(t * 0.3)) * 5; break;
+      case 'dash': rot = fw ? 0.2 : -0.14; dy = -3; ghost = 3; break;
+      case 'jump': py = H * 0.5; rot = Math.max(-0.22, Math.min(0.22, f.vy * 0.011 + f.vx * f.face * 0.012)); break;
+      case 'crouch': sy = 0.74; sx = 1.05; break;
+      case 'guard': case 'block': sy = f.cr ? 0.72 : 0.93; sx = f.cr ? 1.05 : 1.01; rot = -0.04; if (st === 'block') dx = -6 * Math.max(0, 1 - t / 8); break;
+      case 'hit': { const u = Math.max(0, 1 - t / 16); rot = -0.1 - 0.24 * u; dx = -8 * u; white = t < 9 && (t >> 1) % 2 === 0 ? 0.9 : 0; break; }
+      case 'ko': { const u = Math.min(1, t / 16); rot = -u * PI / 2; dy = -ax * u; white = t < 6 && t % 2 === 0 ? 0.9 : 0; alpha *= 1 - 0.5 * clamp01((t - 30) / 40); break; }
+      case 'atk': {
+        const end = m.su + m.ac, lean = f.atk === 'l' ? 0.08 : 0.15;
+        // 突進系の必殺技は sim 側が本体を動かすので、見た目の踏み込みは小さくする
+        const reach = f.atk === 'l' ? 20 : f.atk === 'h' ? 32 : (m.adv || ty === 'dive' || ty === 'upper' || ty === 'warp') ? 12 : 26;
+        if (t <= m.su) { const u = t / m.su; dx = -10 * u; rot = -0.07 * u; }
+        else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -10 + (reach + 10) * u; rot = -0.07 + (lean + 0.07) * u; if (m.adv) ghost = 2; }
+        else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
+        if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
+        if (ty === 'warp' && t < m.su) alpha *= 0.25 + 0.3 * Math.abs(Math.sin(t));
+        if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const z = 1 + 0.08 * (1 - (t - f.ht) / 6); sx *= z; sy *= z; } // ヒットの瞬間だけ拡大
+        break;
+      }
+      default: { const b = Math.sin(t * 0.09); dy = b * 2.5; sy = 1 + b * 0.012; } // 待機：呼吸
+    }
+    if (o.win) dy = -Math.abs(Math.sin(t * 0.14)) * 12;
+    if (ch.b.holo) alpha *= 0.86 + 0.1 * Math.sin(t * 0.3);
+    c.save(); c.translate(f.x, f.y); c.scale(f.face, 1); // 原画は右向き。左向きは水平反転
+    c.imageSmoothingQuality = 'high';
+    const put = (img, a, ox) => { c.globalAlpha = a; c.save(); c.translate(dx + ox, dy - py); c.rotate(rot); c.scale(sx, sy); c.drawImage(img, -ax, py - H, Wd, H); c.restore(); };
+    for (let n = ghost; n >= 1; n--) put(im, alpha * 0.3 / n, -f.vx * f.face * n * 3.2);
+    put(im, alpha, 0);
+    if (white) put(tinted(e, '#fff'), alpha * white, 0);
+    if (st === 'guard' || st === 'block') { // ガード：前面にシールド
+      const r = H * (f.cr ? 0.3 : 0.4), hy = -H * (f.cr ? 0.32 : 0.45), hx = Math.min(Wd - ax, H * 0.28) - r * 0.55;
+      const a = st === 'block' ? 0.95 : 0.5 + 0.12 * Math.sin(t * 0.3);
+      c.globalAlpha = alpha * a * 0.22; c.fillStyle = g; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.closePath(); c.fill();
+      c.globalAlpha = alpha * a; glow(c, g, 14); c.strokeStyle = g; c.lineWidth = 5; c.beginPath(); c.arc(hx, hy, r, -1.05, 1.05); c.stroke();
+      c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.arc(hx, hy, r - 5, -0.95, 0.95); c.stroke(); noGlow(c);
+    }
+    c.globalAlpha = alpha;
+    if (m) drawAtkFx(c, f, m, g, alpha, { hx: H * 0.3, hy: -H * 0.56, cy: -H * 0.5, R: m.rng * 0.96 + 18, ay: -H * 0.45, k: H / 160 });
     c.restore();
   }
+  const hasSprite = ci => !!spriteOf(ci);
+  // スプライトがあればスプライト、無い・未ロードならベクター描画（o.sil=シルエット指定は常にベクター）
+  function drawFighter(c, f, o) {
+    o = o || {};
+    const e = o.sil ? null : spriteOf(f.ci);
+    if (e) drawSprite(c, f, o, e); else drawFighterVec(c, f, o);
+  }
+  // 足元の楕円の影（高く跳ぶほど小さく薄く）
   function drawShadow(c, f) {
     const ch = CHARS[f.ci], k = Math.max(0.35, 1 - (GY - f.y) / 260);
-    c.fillStyle = 'rgba(4,0,14,.5)'; c.beginPath(); c.ellipse(f.x, GY + 4, 38 * ch.b.wd * k, 8 * k, 0, 0, PI * 2); c.fill();
-    c.fillStyle = ch.col.g; c.globalAlpha = 0.13 * k; c.beginPath(); c.ellipse(f.x, GY + 4, 50 * ch.b.wd * k, 11 * k, 0, 0, PI * 2); c.fill(); c.globalAlpha = 1;
+    const rx = (spriteOf(f.ci) ? spriteH(ch) * 0.27 : 38 * ch.b.wd), ry = spriteOf(f.ci) ? 11 : 8;
+    c.fillStyle = `rgba(4,0,14,${0.3 + 0.28 * k})`; c.beginPath(); c.ellipse(f.x, GY + 4, rx * k, ry * k, 0, 0, PI * 2); c.fill();
+    c.fillStyle = ch.col.g; c.globalAlpha = 0.13 * k; c.beginPath(); c.ellipse(f.x, GY + 4, rx * 1.3 * k, ry * 1.4 * k, 0, 0, PI * 2); c.fill(); c.globalAlpha = 1;
   }
 
   function drawProj(c, p, b) {
@@ -594,10 +708,21 @@
     if (o.locked) { g.addColorStop(0, '#1b1830'); g.addColorStop(1, '#0a0816'); } else { g.addColorStop(0, '#120a2c'); g.addColorStop(1, ch.col.a === '#12161c' ? '#0c3a2e' : ch.col.a); }
     c.fillStyle = g; c.fillRect(x, y, w, h);
     if (!o.locked) { c.globalAlpha = 0.22; c.fillStyle = ch.col.g; c.beginPath(); c.arc(x + w / 2, y + h * 0.5, w * 0.48, 0, PI * 2); c.fill(); c.globalAlpha = 0.18; c.strokeStyle = ch.col.g; c.lineWidth = 1; for (let k = 0; k < 6; k++) { c.beginPath(); c.moveTo(x, y + k * h / 5); c.lineTo(x + w, y + k * h / 5 - 18); c.stroke(); } c.globalAlpha = 1; }
-    const s = (o.scale || 1) * (h - 30) / 158 / (ch.b.sc || 1) * Math.min(1, 1.12 / ch.b.wd);
-    c.save(); c.translate(x + w / 2 - 6 * s, y + h - 24); c.scale(s, s);
-    drawFighter(c, { ci, x: 0, y: 0, face: 1, st: 'idle', t: o.t || 0, vx: 0, atk: '' }, { sil: o.locked });
-    c.restore();
+    const por = portraitOf(ci);
+    if (por) {
+      // 顔寄りの絵をセルに cover フィット（上寄せ）。ロック中は黒く伏せたシルエットにする
+      const pw = por.im.naturalWidth, ph = por.im.naturalHeight, k = Math.max(w / pw, h / ph), dw = pw * k, dh = ph * k;
+      const bob = o.locked ? 0 : Math.sin((o.t || 0) * 0.09) * 2;
+      c.imageSmoothingQuality = 'high';
+      c.drawImage(o.locked ? tinted(por, '#05030a') : por.im, x + (w - dw) / 2, y + bob + 2, dw, dh);
+      const ng = c.createLinearGradient(0, y + h - 46, 0, y + h); ng.addColorStop(0, 'rgba(8,2,24,0)'); ng.addColorStop(0.6, 'rgba(8,2,24,.78)'); ng.addColorStop(1, 'rgba(8,2,24,.92)');
+      c.fillStyle = ng; c.fillRect(x, y + h - 46, w, 46); // 名前の帯
+    } else {
+      const s = (o.scale || 1) * (h - 30) / 158 / (ch.b.sc || 1) * Math.min(1, 1.12 / ch.b.wd);
+      c.save(); c.translate(x + w / 2 - 6 * s, y + h - 24); c.scale(s, s);
+      drawFighterVec(c, { ci, x: 0, y: 0, face: 1, st: 'idle', t: o.t || 0, vx: 0, atk: '' }, { sil: o.locked });
+      c.restore();
+    }
     if (o.locked) { text(c, '？', x + w / 2, y + h * 0.42, h * 0.3, '#8d86b3', 'center'); text(c, 'LOCKED', x + w / 2, y + h - 12, 12, '#8d86b3', 'center', true); }
     else text(c, ch.name, x + w / 2, y + h - 12, o.nameSize || 15, '#fff', 'center');
     c.restore();
@@ -606,5 +731,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, fxEvent, fxTick, fxClear, fx };
 })();
