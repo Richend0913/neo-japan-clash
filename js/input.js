@@ -28,6 +28,7 @@
   const $ = id => document.getElementById(id);
   const cv = $('game'), dpad = $('dpad');
   const arrows = { [K.U]: $('dU'), [K.D]: $('dD'), [K.L]: $('dL'), [K.R]: $('dR') };
+  const dcEl = document.querySelector('.dc');
   const faces = [...document.querySelectorAll('.fb')].map(el => ({ el, bit: K[el.dataset.b] }));
   const shoulders = [{ el: $('bL'), bit: K.DL }, { el: $('bR'), bit: K.DR }];
   const ptrs = new Map();
@@ -35,47 +36,26 @@
   // 上下左右を各70°、斜めを各20°にする（8等分だと「上」を少し外しただけで斜めジャンプに化けるため）。中心 0.22R は不感帯。
   const DIRS = [[K.R, 0], [K.D, 90], [K.L, 180], [K.U, 270]], CARD = 35; // CARD = カーディナルの半角（度）
   function dpadBits(x, y) {
-    const r = dpad.getBoundingClientRect(); if (!r.width) return -1;
-    const cx = r.left + r.width / 2, cy = r.top + r.height / 2, R = r.width / 2, dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
-    if (d >= R * 1.3) return -1;
-    if (d < R * 0.22) return 0;
+    // 厳密な範囲判定（見た目のまま）：矢印の板の中＝その方向だけ。板と板の間の四隅＝斜め。中心と外側＝無反応
     for (const b in arrows) { const q = arrows[b].getBoundingClientRect(); if (x >= q.left && x <= q.right && y >= q.top && y <= q.bottom) return +b; }
-    const a = (Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360;
-    let bits = 0, best = 0, bd = 999;
-    for (const [bit, ang] of DIRS) {
-      const df = Math.abs(((a - ang + 540) % 360) - 180);
-      if (df <= CARD) return bit;
-      if (df < 90 - CARD) bits |= bit; // 斜めの20°帯（隣り合う2方向の両方から 35°超〜55°未満）
-      if (df < bd) { bd = df; best = bit; }
-    }
-    return bits || best;
+    const r = dpad.getBoundingClientRect(); if (!r.width || x < r.left || x > r.right || y < r.top || y > r.bottom) return -1;
+    if (dcEl) { const c = dcEl.getBoundingClientRect(); if (x >= c.left && x <= c.right && y >= c.top && y <= c.bottom) return -1; }
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    return (y < cy ? K.U : K.D) | (x < cx ? K.L : K.R);
   }
-  // 丸ボタンと L/R：見た目より広く拾う（丸＝半径+8px 以上、L/R＝外側に12px）。範囲が重なったら中心に近い方
   function hitTest(x, y) {
     const db = dpadBits(x, y);
     if (db >= 0) return { bits: db, els: Object.keys(arrows).filter(b => db & b).map(b => arrows[b]) };
-    let best = null, bd = 1e9;
-    for (const f of faces) {
+    for (const f of faces) { // 見た目の円の範囲だけ（四角の角は円の外なので反応しない）
       const r = f.el.getBoundingClientRect(); if (!r.width) continue;
-      const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
-      if (d < Math.max(r.width * 0.7, r.width / 2 + 8) && d < bd) { bd = d; best = f; }
+      const dx = x - (r.left + r.width / 2), dy = y - (r.top + r.height / 2);
+      if (dx * dx + dy * dy <= (r.width / 2) * (r.width / 2)) return { bits: f.bit, els: [f.el] };
     }
-    for (const s of shoulders) {
-      const r = s.el.getBoundingClientRect(); if (!r.width) continue;
-      const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
-      if (x > r.left - 12 && x < r.right + 12 && y > r.top - 12 && y < r.bottom + 12 && d < bd) { bd = d; best = s; }
+    for (const sb of shoulders) { // 見た目の枠の範囲だけ
+      const r = sb.el.getBoundingClientRect();
+      if (r.width && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return { bits: sb.bit, els: [sb.el] };
     }
-    if (!best) { // ボタン群の範囲内なら、個別の半径の外でも一番近い丸ボタンを拾う（指の腹で押す実機向け）
-      const br = $('btns').getBoundingClientRect();
-      if (br.width && x > br.left - 14 && x < br.right + 14 && y > br.top - 14 && y < br.bottom + 14) {
-        for (const f of faces) {
-          const r = f.el.getBoundingClientRect(); if (!r.width) continue;
-          const d = Math.hypot(x - r.left - r.width / 2, y - r.top - r.height / 2);
-          if (d < bd) { bd = d; best = f; }
-        }
-      }
-    }
-    return best ? { bits: best.bit, els: [best.el] } : null;
+    return null;
   }
   const all = [...Object.values(arrows), ...faces.map(f => f.el), ...shoulders.map(s => s.el)];
   function recompute() {
@@ -107,6 +87,31 @@
   }, { passive: false });
   addEventListener('pointermove', e => { const p = ptrs.get(e.pointerId); if (p) { p.x = e.clientX; p.y = e.clientY; recompute(); } });
   const up = e => { if (ptrs.delete(e.pointerId)) recompute(); };
+  // ?pad デバッグ：ボタンの当たり範囲（枠）と、ゲームが受け取ったタッチ位置（十字）を重ねて表示する
+  if (/[?&]pad(=|&|$)/.test(location.search)) {
+    const oc = document.createElement('canvas');
+    oc.style.cssText = 'position:fixed;inset:0;z-index:99;pointer-events:none';
+    document.body.appendChild(oc);
+    const draw = () => {
+      const dpr = Math.min(2, devicePixelRatio || 1), W = innerWidth, H = innerHeight;
+      if (oc.width !== W * dpr) { oc.width = W * dpr; oc.height = H * dpr; }
+      const c = oc.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+      c.lineWidth = 1.5; c.font = '11px sans-serif';
+      const box = (el, col) => { const r = el.getBoundingClientRect(); if (!r.width) return; c.strokeStyle = col; c.strokeRect(r.left, r.top, r.width, r.height); };
+      box(dpad, '#5fe0ff'); for (const b in arrows) box(arrows[b], '#5fe0ff');
+      for (const f of faces) box(f.el, '#ffd447'); for (const sb of shoulders) box(sb.el, '#ff8ad8');
+      const now = performance.now();
+      for (const p of ptrs.values()) I._lastPad = { x: p.x, y: p.y, t: now };
+      const L = I._lastPad;
+      if (L && now - L.t < 2500) {
+        c.strokeStyle = '#ff3355'; c.lineWidth = 2;
+        c.beginPath(); c.moveTo(L.x - 16, L.y); c.lineTo(L.x + 16, L.y); c.moveTo(L.x, L.y - 16); c.lineTo(L.x, L.y + 16); c.stroke();
+        c.fillStyle = '#ff3355'; c.fillText('touch (' + Math.round(L.x) + ', ' + Math.round(L.y) + ') pad=' + I.pad, L.x + 20, L.y - 8);
+      }
+      requestAnimationFrame(draw);
+    };
+    requestAnimationFrame(draw);
+  }
   addEventListener('pointerup', up); addEventListener('pointercancel', up);
   for (const ev of ['contextmenu', 'gesturestart', 'dblclick', 'selectstart']) addEventListener(ev, e => e.preventDefault());
   addEventListener('touchmove', e => e.preventDefault(), { passive: false });
