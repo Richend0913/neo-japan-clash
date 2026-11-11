@@ -114,13 +114,63 @@
         proj: { n: 3, dmg: 8, vx: 6, dvx: 2, w: 24, h: 24, life: 110, k: 'orb', wv: 1, hs: 16, kb: 4 } } },
   ];
   CHARS.forEach((c, i) => { c.i = i; c.sp.sp = 1; c.b.wd = c.b.wd || 1; });
+  // ---- BRIEF6: コマンドコンボ（鉄拳式）。キャラごとに初級3つ（R/L/S）＋ BRIEF8 の上級2つ（X/J。各キャラ2行目）。seq は「ボタンを押した瞬間に保持していた方向 + ボタン」の列 ----
+  // 方向は相手基準：n=なし d=下 f=相手方向 b=逆方向。ボタン：A=弱（○） H=強（×）。type は下の CMD_TYPES の型
+  const CMDS = {
+    zanrai: [['fA fA', '雷鳴二連斬', 'R'], ['dH fH', '紫電崩し', 'L'], ['nA nH nA', '天雷三段', 'S'],
+      ['fA nA dH nH nA', '雷神連続斬', 'X'], ['dH fA nA fH', '天覇雷獄', 'J']],
+    mikoto: [['nA nA nH', '神楽連舞', 'R'], ['dA fH', '破魔旋風', 'L'], ['fH dH', '鈴祓い', 'S'],
+      ['nA fA dA nH nA', '神楽・千本桜', 'X'], ['dA nH nA nH', '天祓い旋回', 'J']],
+    kagemaru: [['bA fA', '影縫い', 'R'], ['dH dH', '朧打ち上げ', 'L'], ['nA fH nA', '残影三手', 'S'],
+      ['bA nA fA dH nH', '影縫い・獄', 'X'], ['dH nH fA fH nA', '朧月落とし', 'J']],
+    gounen: [['fH fH', '金剛連打', 'R'], ['dH nH', '羅漢打ち上げ', 'L'], ['nH nA nH', '破戒の一撃', 'S'],
+      ['fH nA nH dH fH', '金剛破砕連拳', 'X'], ['dH dH fA nH', '羅漢天昇脚', 'J']],
+    konko: [['nA fA nA', 'きらめきステップ', 'R'], ['dA nH', 'スターダストスピン', 'L'], ['fA dH', 'アンコールフィーバー', 'S'],
+      ['fA nA nA dH fH', 'きらめきフィーバーラッシュ', 'X'], ['dA dH fA nH', 'スターダストドリーム', 'J']],
+    raidenzan: [['fH fA', '雷張り手', 'R'], ['dH dH', '大地持ち上げ', 'L'], ['nH nH nA', '四股踏み崩し', 'S'],
+      ['fH dH nA nH fH', '雷鳴四股連撃', 'X'], ['dH nH fH nA nH', '大地天昇', 'J']],
+    shuki: [['fA nH', '鬼連牙', 'R'], ['bH dH', '天魔打ち', 'L'], ['nA nA dH', '羅刹滅砕', 'S'],
+      ['fA dH nA dH nH', '羅刹獄連牙', 'X'], ['bH nH dA nH', '天魔轟落', 'J']],
+    shion: [['fA fH', '紫電の連なり', 'R'], ['dA fH', '月下打ち上げ', 'L'], ['nA nH fH', '終わりの太刀', 'S'],
+      ['fA nA fH dA nH', '紫電・終わりなき連なり', 'X'], ['dA nH fA nH', '月下天斬', 'J']],
+    ougi: [['nA fA nH', '花吹雪', 'R'], ['dH fA', '舞い上がり', 'L'], ['fH nA nH', '千年桜', 'S'],
+      ['nA nA fH dH nA', '千年桜乱舞', 'X'], ['dH nA nA nH', '舞扇天昇', 'J']],
+    nishiki: [['fA fA fA', '高速三連打', 'R'], ['dH dH', 'ブーストアッパー', 'L'], ['nA nH nH', 'オーバードライブ', 'S'],
+      ['fA fA nA nH fH', 'オーバードライブ連打改', 'X'], ['dH nH fA nH', 'ブーストジャグリング', 'J']],
+    kurotengu: [['bA bA', '烏羽連撃', 'R'], ['dA fH', '天狗跳ね', 'L'], ['fH dA nH', '神風崩し', 'S'],
+      ['bA fA nA dH nH', '神風獄連撃', 'X'], ['dA nH nA fH', '天狗天落', 'J']],
+    ryujin: [['fH nA nH', '龍連爪', 'R'], ['dH fH', '昇龍撃', 'L'], ['nH dH nA', 'Ωフィニッシュ', 'S'],
+      ['fH nA fH nH dH', '龍神滅爪連撃', 'X'], ['dH nH nA nH', 'Ωライジング', 'J']],
+    mumei: [['nA nA nA', '無銘三連', 'R'], ['bH fH', '居合い崩し', 'L'], ['dA nH nA', '名無しの終わり', 'S'],
+      ['nA nA dA nH dA', '名無しの連なり・終', 'X'], ['bH dH fA nH', '無銘天落', 'J']],
+    kaguya: [['fA nA fH', '月読プログラム', 'R'], ['dA dH', 'グラビティリフト', 'L'], ['nA fH nH', '.exeクラッシュ', 'S'],
+      ['fA nA nH dH nH', '.exeフルクラッシュ', 'X'], ['dA nH fA nH', 'ルナティックジャグル', 'J']],
+  };
+  // 型ごとの段データ。f=その段のダメージ（強 h に対する割合。コンボ補正ぶんは sim が打ち消す） v=見た目（1文字目 l/h=攻撃絵/強攻撃絵、2文字目=変種 c しゃがみ / f 前傾 / b 後傾 / 2 小振り / x 閃光）
+  // su=発生（1段目は sim が強の発生から 11〜14f に収める） step=発生前から前進し続ける adv=打つ瞬間の踏み込み low=下段の高さ launch=打ち上げ初速 kb=ノックバック倍率 stopx=ヒットストップ追加
+  const CMD_TYPES = {
+    R: { label: 'ラッシュ', st: [{ f: 0.5, v: 'lf', step: 1 }, { f: 0.5, v: 'l2', su: 7, step: 1 }, { f: 0.8, v: 'hf', su: 8, step: 1 }] },
+    L: { label: 'ランチャー', st: [{ f: 0.6, v: 'lc', adv: 4 }, { f: 1.0, v: 'hb', su: 9, adv: 4, launch: 10 }] },
+    S: { label: 'フィニッシュ', st: [{ f: 0.5, v: 'lc', adv: 4, low: 1 }, { f: 0.6, v: 'lf', su: 7, adv: 4 }, { f: 1.1, v: 'hx', su: 10, adv: 4, kb: 2, stopx: 4 }] },
+    // ---- BRIEF8: 上級（adv: 1）。rcx = 最終段の硬直の上乗せ（強 +16f。初級は +10f） kbi = 途中段のノックバック（既定 3）
+    // X ロングストリング：地上5段。中段・下段を交互に混ぜ、最終段は大きく吹き飛ばす。配分の合計 3.2
+    X: { label: 'ロングストリング', adv: 1, rcx: 16, st: [{ f: 0.5, v: 'lf', step: 1 }, { f: 0.5, v: 'lc', su: 7, adv: 4, low: 1 }, { f: 0.55, v: 'l2', su: 7, step: 1 },
+      { f: 0.65, v: 'hc', su: 8, adv: 4, low: 1 }, { f: 1.0, v: 'hx', su: 10, adv: 4, kb: 2.2, stopx: 4 }] },
+    // J ジャグル：打ち上げ → 空中2段 → 叩き落とし。hi = 当たり判定を高く・広く（空中の相手に届く） pop = 空中の相手を浮かせ直す初速 spike = 空中の相手を叩き落とす下向きの速さ。配分の合計 3.0
+    J: { label: 'ジャグル', adv: 1, rcx: 16, st: [{ f: 0.6, v: 'hb', adv: 4, launch: 11, kbi: 2 }, { f: 0.6, v: 'lu', su: 6, adv: 3, hi: 1, pop: 5, kbi: 1.2 },
+      { f: 0.7, v: 'hu', su: 6, adv: 3, hi: 1, pop: 5, kbi: 1.2 }, { f: 1.1, v: 'hx', su: 8, adv: 3, hi: 1, spike: 13, kb: 1.4, stopx: 3 }] },
+  };
+  const ARROW = { n: '', d: '↓', f: '→', b: '←' }, BTN = { A: '○', H: '×' };
+  // 技表の表記（相手が右にいるときの向き。弱=○ / 強=×）
+  const cmdText = seq => seq.map(s => ARROW[s[0]] + BTN[s[1]]).join(' ');
+  CHARS.forEach(c => { c.cmds = CMDS[c.id].map(([q, name, type]) => { const seq = q.split(' '); return { name, type, seq, key: seq.join(''), text: cmdText(seq), adv: CMD_TYPES[type].adv ? 1 : 0 }; }); });
   const INITIAL = 10; // 0..9 が初期キャラ
   // ステータス表示用（1〜5）
   function stats(c) {
     const r = (v, lo, hi) => Math.max(1, Math.min(5, Math.round(1 + 4 * (v - lo) / (hi - lo))));
     return { hp: r(c.hp, 80, 140), spd: r(c.spd, 2.8, 5.6), pow: r(c.pow, 0.85, 1.3) };
   }
-  const api = { CHARS, INITIAL, stats };
+  const api = { CHARS, INITIAL, stats, CMD_TYPES, cmdText };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -76,9 +76,12 @@
   function fxAndSound(e, b) {
     D.fxEvent(e, b);
     // 弱＝高く軽い音、強＝低く太い音。ダッシュ攻撃・落下攻撃は踏み切り音を足す
-    if (e.k === 'hit') A.play(e.h ? 'heavy' : 'hit');
+    if (e.k === 'hit') { A.play(e.h ? 'heavy' : 'hit'); if (e.g === 3) A.play('chgHit'); }
+    else if (e.k === 'chgup') A.play('chg' + e.lv); // ための段階が上がった（Lv ごとにピッチ違い）
+    else if (e.k === 'chg') { if (e.lv === 3) A.play('chgMax'); }
     else if (e.k === 'sw') { A.play(e.h ? 'swingH' : 'swing'); if (e.v) A.play('rush'); }
     else if (e.k === 'land') A.play(e.h ? 'landH' : 'land');
+    else if (e.k === 'cmd') A.play('rush'); // コマンドコンボ発動
     else A.play(SND[e.k]);
   }
 
@@ -125,7 +128,7 @@
   const inR = (r, x, y) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h;
   function Select(o) {
     D.preloadPortraits();
-    let cur = o.cur || 0; setBtns([]);
+    let cur = o.cur || 0, cmdLayout = [], cmdBadge = null; setBtns([]);
     function pick() {
       if (o.gallery) return;
       if (!isUnlocked(cur)) { A.play('ng'); toastMsg('まだ使えません ― 解放条件：' + CHARS[cur].lock); return; }
@@ -133,7 +136,7 @@
     }
     function mv(d) { const n = CHARS.length; cur = (cur + d + n) % n; A.play('move'); }
     return {
-      kind: o.gallery ? 'gallery' : 'select', back: o.onBack, get cur() { return cur; },
+      kind: o.gallery ? 'gallery' : 'select', back: o.onBack, get cur() { return cur; }, get cmdLayout() { return cmdLayout; }, get cmdBadge() { return cmdBadge; },
       update(m, pr) {
         if (pr & K.L) mv(cur % COLS === 0 ? COLS - 1 : -1); else if (pr & K.R) mv(cur % COLS === COLS - 1 ? -(COLS - 1) : 1);
         else if (pr & (K.U | K.D)) mv(COLS);
@@ -153,25 +156,52 @@
           D.drawPortrait(ctx, i, p.x, p.y, CW, CH, { locked: !isUnlocked(i), sel: i === cur, t: i === cur ? T : 0, tag: i === cur ? (o.tag || 'YOU') : null, selCol: o.tag === 'CPU' ? '#49d0ff' : '#ffd447' });
         }
         // 情報パネル
-        const c = CHARS[cur], open = isUnlocked(cur), px = 196, py = 324, pw = 568;
-        panel(px, py, pw, 160, open ? c.col.g : '#8d86b3');
+        // BRIEF6: 情報パネルを詰め、その下に技表の帯を置く。BRIEF8: パネルをさらに 110→100px に詰め、帯を2段（上段＝初級3つ／下段＝上級2つ）にした
+        const c = CHARS[cur], open = isUnlocked(cur), px = 196, py = 322, pw = 568, col = o.tag === 'CPU' ? '#49d0ff' : '#ffd447';
+        panel(px, py, pw, 100, open ? c.col.g : '#8d86b3');
         if (open) {
-          D.text(ctx, c.name, px + 16, py + 24, 28, '#fff'); ctx.font = D.font(28); D.text(ctx, c.en, px + 20 + ctx.measureText(c.name).width + 10, py + 28, 14, c.col.g, 'left', true);
-          D.text(ctx, c.title + ' ／ ' + c.type, px + 16, py + 52, 14, '#ffe9a8');
+          D.text(ctx, c.name, px + 16, py + 20, 24, '#fff'); ctx.font = D.font(24); const nw = ctx.measureText(c.name).width;
+          D.text(ctx, c.en, px + 26 + nw, py + 23, 13, c.col.g, 'left', true);
+          D.text(ctx, c.title + ' ／ ' + c.type, px + pw - 16, py + 21, 13, '#ffe9a8', 'right');
           const st = N.stats(c), rows = [['HP', st.hp, '#ff5d6c'], ['速度', st.spd, '#4dffb4'], ['威力', st.pow, '#ffd447']];
           rows.forEach((r, k) => {
-            const y = py + 80 + k * 24; D.text(ctx, r[0], px + 16, y, 14, '#cfe9ff');
-            for (let s = 0; s < 5; s++) { ctx.fillStyle = s < r[1] ? r[2] : 'rgba(255,255,255,.14)'; ctx.fillRect(px + 64 + s * 30, y - 6, 25, 12); }
+            const y = py + 47 + k * 18; D.text(ctx, r[0], px + 16, y, 13, '#cfe9ff');
+            for (let s = 0; s < 5; s++) { ctx.fillStyle = s < r[1] ? r[2] : 'rgba(255,255,255,.14)'; ctx.fillRect(px + 64 + s * 30, y - 5, 25, 10); }
           });
-          D.text(ctx, '必殺技（□・ゲージ半分消費）', px + 262, py + 80, 13, '#cfe9ff');
-          D.text(ctx, c.sp.name, px + 262, py + 108, 24, c.col.g, 'left', true);
-          D.text(ctx, SP_DESC[c.sp.type], px + 262, py + 136, 12, '#fff');
+          D.text(ctx, '必殺技（□・ゲージ半分消費）', px + 262, py + 45, 12, '#cfe9ff');
+          D.text(ctx, c.sp.name, px + 262, py + 65, 21, c.col.g, 'left', true);
+          D.text(ctx, SP_DESC[c.sp.type], px + 262, py + 85, 12, '#fff');
         } else {
-          D.text(ctx, '？？？', px + 16, py + 28, 28, '#8d86b3'); D.text(ctx, 'LOCKED', px + 130, py + 30, 14, '#8d86b3', 'left', true);
-          D.text(ctx, '解放条件', px + 16, py + 72, 14, '#cfe9ff');
-          D.text(ctx, c.lock, px + 16, py + 104, 22, '#ffd447');
-          D.text(ctx, '条件を満たすとシルエットが解放され、使えるようになります', px + 16, py + 138, 12, '#fff');
+          D.text(ctx, '？？？', px + 16, py + 20, 24, '#8d86b3'); D.text(ctx, 'LOCKED', px + 116, py + 22, 13, '#8d86b3', 'left', true);
+          D.text(ctx, '解放条件', px + 16, py + 47, 13, '#cfe9ff');
+          D.text(ctx, c.lock, px + 96, py + 47, 18, '#ffd447');
+          D.text(ctx, '条件を満たすとシルエットが解放され、使えるようになります', px + 16, py + 80, 12, '#fff');
         }
+        // 技表の帯：カーソルが合っているキャラのコマンドコンボ5つ（技名＋コマンド。弱=○ / 強=×、矢印は相手が右にいるときの向き）
+        // 上段＝初級3つ（3列）、下段＝上級2つ（2列。金色の地＋「★上級」バッジ＋★つきの金色の技名で区別）
+        const by = py + 103, bh = 64, rh = bh / 2, lw = 84, ADV_COL = '#ffc43c';
+        panel(px, by, pw, bh, col, 0.86);
+        ctx.fillStyle = 'rgba(255,196,60,.13)'; ctx.fillRect(px + 2, by + rh, pw - 4, rh - 2);
+        ctx.fillStyle = 'rgba(255,255,255,.2)'; ctx.fillRect(px + 8, by + rh - 0.5, pw - 16, 1);
+        D.text(ctx, 'コマンド技', px + 10, by + 10, 12, col); D.text(ctx, '○弱 ×強', px + 10, by + 23, 10, '#cfe9ff');
+        const fit = (str, px0, max, it) => { let q = px0; for (; q > 8; q--) { ctx.font = D.font(q, it); if (ctx.measureText(str).width <= max) break; } return q; };
+        cmdLayout = []; cmdBadge = null;
+        if (open) { // 「★上級」バッジ（下段の左）
+          cmdBadge = { x: px + 9, y: by + rh + 6, w: 66, h: 19, label: '★上級' };
+          ctx.fillStyle = ADV_COL; rr(cmdBadge.x, cmdBadge.y, cmdBadge.w, cmdBadge.h, 5); ctx.fill();
+          ctx.font = D.font(13); ctx.fillStyle = '#2a1400'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(cmdBadge.label, cmdBadge.x + cmdBadge.w / 2, cmdBadge.y + cmdBadge.h / 2 + 1); ctx.textAlign = 'left'; // 金地に濃い文字（縁取りなしで読みやすく）
+        }
+        (open ? c.cmds : []).forEach((m, k) => {
+          const row = m.adv ? 1 : 0, col2 = row ? k - 3 : k, cw = (pw - lw - 8) / (row ? 2 : 3);
+          const x = px + lw + col2 * cw, y = by + row * rh, max = cw - 14, label = (row ? '★' : '') + m.name;
+          if (col2) { ctx.fillStyle = 'rgba(255,255,255,.18)'; ctx.fillRect(x - 5, y + 5, 1, rh - 10); }
+          const s1 = fit(label, 12, max, false), s2 = fit(m.text, 15, max, true);
+          D.text(ctx, label, x + 2, y + 10, s1, row ? ADV_COL : c.col.g);
+          D.text(ctx, m.text, x + 2, y + 23, s2, '#fff', 'left', true);
+          ctx.font = D.font(s1); const w1 = ctx.measureText(label).width; ctx.font = D.font(s2, true); const w2 = ctx.measureText(m.text).width;
+          cmdLayout.push({ name: m.name, text: m.text, adv: row, label, x: x + 2, y, row, max, w: Math.max(w1, w2), px: [s1, s2], right: x + 2 + Math.max(w1, w2), bandRight: px + pw, bandBottom: by + bh });
+        });
+        if (!open) D.text(ctx, '？？？　（解放すると見られます）', px + lw + 2, by + bh / 2, 13, '#8d86b3');
         for (const [r, label, on] of [[B_BACK, '× もどる', true], [B_OK, '○ 決定', !o.gallery]]) {
           if (!on) continue;
           ctx.fillStyle = 'rgba(10,4,30,.85)'; rr(r.x, r.y, r.w, r.h, 8); ctx.fill(); ctx.strokeStyle = label[0] === '○' ? '#ff5d6c' : '#6fb7ff'; ctx.lineWidth = 2; rr(r.x, r.y, r.w, r.h, 8); ctx.stroke();

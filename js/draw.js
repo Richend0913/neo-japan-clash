@@ -276,7 +276,10 @@
   const UL = 28, LL = 30, TOR = 44, UA = 22, LA = 22, HR = 13;
   const isHv = N.isHeavy;
   // 種別 → 基本（'l' 弱 / 'h' 強 / 's' 必殺）と、変種（'d' ダッシュ / 'a' 落下 / 'c' しゃがみ / 'f' 前進 / 'b' 後退 / '2' チェイン2段目 / 'x' フィニッシュ）
-  const baseK = k => (k === 'l2' ? 'l' : k === 'lf' ? 'h' : k.length === 2 ? k[1] : k), varK = k => (k === 'l2' ? '2' : k === 'lf' ? 'x' : k.length === 2 ? k[0] : '');
+  // BRIEF6: コマンドコンボの段（'c' + 番号 + 段 + 見た目2文字）は、種別の末尾2文字がそのまま 基本／変種
+  // BRIEF7: チャージ攻撃（'g' + Lv + 'l'/'h'）は、強の絵（hev）を基本に、変種 'g'。Lv は種別の2文字目
+  const baseK = k => (k === 'l2' ? 'l' : k === 'lf' ? 'h' : k.length === 5 ? k[3] : k.length === 3 ? 'h' : k.length === 2 ? k[1] : k), varK = k => (k === 'l2' ? '2' : k === 'lf' ? 'x' : k.length === 5 ? k[4] : k.length === 3 ? 'g' : k.length === 2 ? k[0] : '');
+  const CHG_COL = (lv, g) => (lv >= 3 ? '#ff7a3d' : lv === 2 ? '#ffe066' : g); // ための色：Lv1＝キャラの発光色、Lv2＝金、Lv3＝橙
   const pt = (p, a, l) => ({ x: p.x + Math.sin(a) * l, y: p.y + Math.cos(a) * l });
   const BASE = { lean: 0.1, aF: [0.55, 1.9], aB: [0.25, 1.6], lF: [0.3, -0.05], lB: [-0.3, -0.3], w: 2.5 };
   const P = o => Object.assign({}, BASE, o);
@@ -312,7 +315,7 @@
       case 'ko': return P({ lean: -0.25, aF: [-0.6, -0.2], aB: [-1.2, -0.8], lF: [0.5, 0.2], lB: [0.1, -0.3], w: 0.6 });
       case 'atk': {
         const m = N.mv(ch, f.atk), ps = atkPoses(f, m); let p;
-        if (t <= m.su) p = mix(BASE, ps[0], Math.min(1, t / Math.max(2, m.su * 0.6)));
+        if (t <= m.su) p = mix(BASE, ps[0], varK(f.atk) === 'g' ? 1 : Math.min(1, t / Math.max(2, m.su * 0.6)));
         else if (t <= m.su + m.ac) {
           p = mix(ps[0], ps[1], Math.min(1, (t - m.su) / 2));
           if (f.atk === 's' && m.spin) { const a = 1.57 + (t - m.su) * 0.9; p.aF = [a, a]; p.w = a; p.lean = 0.2; }
@@ -529,6 +532,7 @@
   // geo: hx,hy=手元  cy=弧の中心の高さ  R=弧の半径  ay=オーラ中心の高さ  k=太さなどの倍率
   function drawAtkFx(c, f, m, g, alpha, geo) {
     const t = f.t, ty = f.atk === 's' ? m.type : '', k = geo.k, hv = isHv(f.atk), fall = !!m.fall, vr = varK(f.atk);
+    const gl = vr === 'g' ? +f.atk[1] : 0, gc = CHG_COL(gl, g); // チャージ攻撃：Lv が高いほど弧が大きく太く、色が強い
     const cy = vr === 'c' ? geo.cy * 0.7 : geo.cy; // しゃがみ技は弧の中心も低い
     const tail = hv ? 7 : 3; // 強の斬撃は長く残る
     if (t > m.su && t <= m.su + m.ac + tail && !(fall && !f.air)) {
@@ -549,9 +553,16 @@
         else if (vr === 'f') { a0 += 0.12; a1 += 0.18; } // 前進技：前へ突き出す
         else if (vr === 'b') a0 -= 0.3; // 後退技：長く振り抜く
         else if (vr === '2') { a0 = -0.28; a1 = 0.3; } // 2段目：小さい弧
+        else if (vr === 'u') { a0 = -1.8; a1 = -0.25; } // BRIEF8 ジャグルの空中段：頭上へ振り上げる弧
         // 弱＝細く短い弧、強＝太く大きい二重の弧（発光はぼかしではなく、太い半透明の線を下に敷く）
-        const R = geo.R * (hv ? 1.14 : 1) * (vr === '2' ? 0.8 : vr === 'x' ? 1.1 : 1), lw = (ty ? 13 : hv ? 17 : 8) * k * (vr === '2' ? 0.75 : vr === 'x' ? 1.2 : 1), a = alpha * Math.max(0, u);
-        c.lineCap = 'round'; c.strokeStyle = g;
+        const R = geo.R * (hv ? 1.14 : 1) * (vr === '2' ? 0.8 : vr === 'x' ? 1.1 : 1) * (1 + 0.04 * gl), lw = (ty ? 13 : hv ? 17 : 8) * k * (vr === '2' ? 0.75 : vr === 'x' ? 1.2 : 1) * (1 + 0.2 * gl), a = alpha * Math.max(0, u);
+        if (gl) { a0 -= 0.08 * gl; a1 += 0.06 * gl; }
+        c.lineCap = 'round'; c.strokeStyle = gc;
+        if (gl === 3) { // Lv3：弧を二重にして、後ろに残像の弧を引く
+          for (let n = 2; n >= 1; n--) { c.globalAlpha = a * 0.28 / n; c.lineWidth = lw; c.beginPath(); c.arc(-16 * n * k, cy, R, a0 - 0.14 * n, a1 - 0.14 * n); c.stroke(); }
+          c.globalAlpha = a * 0.85; c.lineWidth = lw * 0.5; c.beginPath(); c.arc(0, cy, R + lw * 1.5, a0 - 0.12, a1 + 0.1); c.stroke();
+          c.strokeStyle = '#fff'; c.lineWidth = 2.5 * k; c.beginPath(); c.arc(0, cy, R + lw * 1.5 + 2, a0, a1); c.stroke(); c.strokeStyle = gc;
+        }
         c.globalAlpha = a * 0.26; c.lineWidth = lw * 2.3; c.beginPath(); c.arc(0, cy, R, a0, a1); c.stroke();
         c.globalAlpha = a; c.lineWidth = lw; c.beginPath(); c.arc(0, cy, R, a0, a1); c.stroke();
         if (hv) { c.globalAlpha = a * 0.55; c.lineWidth = lw * 0.5; c.beginPath(); c.arc(0, cy, R - lw * 1.5, a0 + 0.25, a1 - 0.1); c.stroke(); c.globalAlpha = a; }
@@ -607,7 +618,7 @@
     const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
     const fw = (f.vx >= 0 ? 1 : -1) === f.face; // 前進中か
     // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数  streak=スピード線（1=水平 2=斜め下）
-    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, ga = 0.3, streak = 0, alpha = o.alpha == null ? 1 : o.alpha;
+    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, ga = 0.3, streak = 0, gfix = 0, alpha = o.alpha == null ? 1 : o.alpha;
     switch (st) {
       case 'walk': rot = (fw ? 1 : -1) * 0.05 * Math.min(1, t / 5); dy = -Math.abs(Math.sin(t * Math.abs(f.vx) * 0.07)) * 3; break; // 進行方向へ最大約3°傾く。上下動は移動速度に同期
       case 'dash': rot = fw ? 0.2 : -0.14; dy = -3; ghost = 3; break;
@@ -641,12 +652,23 @@
           else if (vr === 'b') { back += 12; br += 0.17; lean += 0.1; reach += 6; } // 後退技：発生中は大きく後ろに反り、打ち出しで前傾
           else if (vr === '2') { lean = 0.05; reach = 12; back = 3; br = 0.02; } // 2段目：小さく速い
           else if (vr === 'x') { lean = 0.27; reach = 54; back = 26; } // フィニッシュ：強より深く
-          if (t <= m.su) { let u = t / m.su; if (big) u = u * u * (3 - 2 * u); dx = -back * u; rot = -br * u; sy = 1 - bs * u; sx = 1 + bs * 0.4 * u; if (big && t > m.su - 3) dx += (t % 2 ? 1.5 : -1.5); } // 予備動作：沈んで後ろに引く（強は深く、最後に震える）
+          else if (vr === 'u') { lean = -0.07; reach = lt ? 14 : 24; back = 6; br = 0.04; } // ジャグルの空中段：上を向いて小さく速く突き上げる
+          else if (vr === 'g') { const L = +f.atk[1]; lean = 0.2 + 0.05 * L; reach = 44 + 9 * L; back = 22 + 4 * L; br = 0.14 + 0.03 * L; } // チャージ攻撃：Lv が高いほど深く引いて深く踏み込む
+          if (t <= m.su) { let u = vr === 'g' ? 1 : t / m.su; if (big) u = u * u * (3 - 2 * u); dx = -back * u; rot = -br * u; sy = 1 - bs * u; sx = 1 + bs * 0.4 * u; if (big && t > m.su - 3) dx += (t % 2 ? 1.5 : -1.5); } // 予備動作：沈んで後ろに引く（強は深く、最後に震える）
           else if (t <= end) { const u = Math.min(1, (t - m.su) / 2); dx = -back + (reach + back) * u; rot = -br + (lean + br) * u; if (m.adv) ghost = 2; }
           else { const u = 1 - Math.min(1, (t - end) / m.rc); dx = reach * u * u; rot = lean * u; }
           if (f.air || ty === 'dive') { py = H * 0.5; rot += 0.16; }
           if (vr === 'c') { const q = t <= end ? Math.min(1, t / 3) : 1 - Math.min(1, (t - end) / m.rc); sy *= 1 - 0.22 * q; sx *= 1 + 0.06 * q; rot *= 0.6; } // しゃがみ技：低く潰して打つ
           if (vr === 'x' && t > m.su && t <= m.su + 2) white = 0.55; // フィニッシュの出際は白く光る
+          if (vr === 'g') { // チャージ攻撃：Lv2 以上は出際に白く光る。Lv3 は振り抜くまで残像を引く
+            const L = +f.atk[1]; if (L >= 2 && t > m.su && t <= m.su + 2) white = L === 3 ? 0.75 : 0.45;
+            if (L === 3 && t <= end + 4) { ghost = 3; ga = 0.4; gfix = t <= m.su ? -9 : -20; }
+          }
+          if (f.cb && f.chg >= 8 && t >= m.su) { // ため中：小刻みに震え、Lv が上がるほど深く沈む。Lv が上がった瞬間は白く光る
+            const L = N.chgLv(f.chg), since = L ? f.chg - N.CHG_LV[L - 1] : 9;
+            dx += ((o.frame | 0) % 2 ? 1 : -1) * (0.5 + 0.7 * L); sy *= 1 - 0.018 * L; sx *= 1 + 0.008 * L;
+            if (L < 3 ? since < 3 : f.chg < N.CHG_LV[2]) white = 0.65; else if (L === 3 && (o.frame | 0) % 8 < 2) white = 0.4; // Lv3 は満タンのあいだ、ゆっくり明滅する
+          }
         }
         if (ty === 'warp' && t < m.su) alpha *= 0.25 + 0.3 * Math.abs(Math.sin(t));
         if (f.ht >= 0 && t >= f.ht && t - f.ht <= 5) { const zz = 1 + (hv ? 0.13 : 0.08) * (1 - (t - f.ht) / 6); sx *= zz; sy *= zz; } // ヒットの瞬間だけ拡大（強は大きく）
@@ -678,7 +700,7 @@
     }
     const put = (img, a, ox, w, an) => { c.globalAlpha = a; c.save(); c.translate(dx + ox, dy - py); c.rotate(rot); c.scale(sx, sy); c.drawImage(img, -an, py - H, w, H); c.restore(); };
     const src = scaled(e, H * z);
-    const gs = Math.abs(f.vx) > 1 ? -f.vx * f.face * 3.2 : 0, gy = streak === 2 ? -f.vy * 2.2 : 0;
+    const gs = gfix || (Math.abs(f.vx) > 1 ? -f.vx * f.face * 3.2 : 0), gy = streak === 2 ? -f.vy * 2.2 : 0;
     // 残像・クロスフェード・白フラッシュは薄い重ね描きなので補間なし（最近傍）で貼る。重ね描きが続く瞬間のコマ落ちを減らすため
     c.imageSmoothingEnabled = false;
     if (gs || gy) for (let n = ghost; n >= 1; n--) { c.globalAlpha = alpha * ga / n; c.save(); c.translate(dx + gs * n, dy - py + gy * n); c.rotate(rot); c.scale(sx, sy); c.drawImage(src, -ax, py - H, Wd, H); c.restore(); }
@@ -772,6 +794,28 @@
   function dust(x, n, v) {
     for (let i = 0; i < n; i++) { const d = i % 2 ? 1 : -1; part({ x: x + d * (4 + Math.random() * 10), y: GY - 1, vx: d * (0.8 + Math.random() * v), vy: -0.4 - Math.random() * 1.6, life: 10 + Math.random() * 8, max: 18, col: 'rgba(225,210,255,.75)', s: 3 + Math.random() * 2.5 }); }
   }
+  // ため中のエフェクト（BRIEF7）：足元の光の輪が立ちのぼり、光の粒が上がる。Lv が上がるほど濃く・大きく・数が増える。Lv3 は体を包む光
+  function drawCharge(c, f, frame) {
+    if (f.st !== 'atk' || !f.cb || f.chg < 8) return;
+    const ch = CHARS[f.ci], H = spriteH(ch), L = N.chgLv(f.chg), col = CHG_COL(L, ch.col.g), rx = H * (0.24 + 0.07 * L), up = H * (0.3 + 0.14 * L);
+    c.save(); c.translate(f.x, f.y);
+    c.globalAlpha = 0.14 + 0.08 * L; c.fillStyle = col; c.beginPath(); c.ellipse(0, 3, rx * 1.15, rx * 0.27, 0, 0, PI * 2); c.fill();
+    c.strokeStyle = col;
+    for (let k = 0, n = 2 + L; k < n; k++) {
+      const q = (frame * (0.035 + 0.01 * L) + k / n) % 1, w = 1 - 0.4 * q;
+      c.globalAlpha = (0.4 + 0.15 * L) * (1 - q); c.lineWidth = 2 + L; c.beginPath(); c.ellipse(0, 3 - q * up, rx * w, rx * 0.25 * w, 0, 0, PI * 2); c.stroke();
+    }
+    for (let k = 0, n = 4 + L * 4; k < n; k++) {
+      const q = (frame * (0.03 + 0.012 * L) + k * 0.37) % 1, xx = Math.sin(k * 2.4) * rx, hh = 9 + 7 * L;
+      c.globalAlpha = (0.45 + 0.15 * L) * (1 - q); c.fillStyle = k % 2 ? '#fff' : col; c.fillRect(xx - 1.5, -q * (up + H * 0.3) - hh, 3, hh);
+    }
+    if (L === 3) {
+      const pu = 0.5 + 0.5 * Math.sin(frame * 0.7);
+      c.globalAlpha = 0.07 + 0.06 * pu; c.fillStyle = col; c.beginPath(); c.ellipse(0, -H * 0.45, H * 0.36, H * 0.56, 0, 0, PI * 2); c.fill();
+      c.globalAlpha = 0.6 + 0.4 * pu; c.strokeStyle = '#fff'; c.lineWidth = 2.5; c.beginPath(); c.ellipse(0, -H * 0.45, H * (0.36 + 0.02 * pu), H * (0.56 + 0.02 * pu), 0, 0, PI * 2); c.stroke();
+    }
+    c.restore(); c.globalAlpha = 1;
+  }
   function fxEvent(e, b) {
     switch (e.k) {
       case 'hit': {
@@ -787,13 +831,43 @@
         fx.shake = Math.max(fx.shake, e.h ? 16 : 4); if (e.h) fx.flash = 4;
         if (e.c >= 2) { fx.texts = fx.texts.filter(t => t.kind !== 'combo' + e.s); fx.texts.push({ kind: 'combo' + e.s, x: e.s ? 800 : 160, y: 150, str: e.c + ' HITS', life: 70, col: '#ffd447', size: 34 }); }
         if (e.h && e.sp) fx.texts.push({ x: e.x, y: e.y - 30, str: 'HI IMPACT', life: 40, col: '#ff8a3d', size: 22, rise: 1 });
+        if (e.g >= 2) { // チャージ攻撃のヒット：Lv2 は揺れ大、Lv3 は揺れ特大＋白フラッシュ＋三重の輪
+          const col = CHG_COL(e.g, g);
+          fx.shake = Math.max(fx.shake, e.g === 3 ? 30 : 21); sparks(e.x, e.y, col, e.g === 3 ? 26 : 12, e.g === 3 ? 13 : 9);
+          fx.rings.push({ x: e.x, y: e.y, r: 10, vr: 10, life: 12, col });
+          if (e.g === 3) {
+            fx.flash = 8; fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 18, life: 11, col: '#fff' }, { x: e.x, y: e.y, r: 20, vr: 6, life: 12, col });
+            fx.texts.push({ x: e.x, y: e.y - 40, str: 'FULL CHARGE', life: 46, col: '#ff7a3d', size: 24, rise: 1 });
+          }
+        }
         break;
       }
-      case 'block': sparks(e.x, e.y, '#8fdcff', 6, 4); fx.rings.push({ x: e.x, y: e.y, r: 5, vr: 3, life: 8, col: '#8fdcff' }); fx.shake = Math.max(fx.shake, 2); break;
+      case 'block': sparks(e.x, e.y, '#8fdcff', 6, 4); fx.rings.push({ x: e.x, y: e.y, r: 5, vr: 3, life: 8, col: '#8fdcff' }); fx.shake = Math.max(fx.shake, 2);
+        if (e.g === 3) { sparks(e.x, e.y, '#fff', 14, 9); fx.rings.push({ x: e.x, y: e.y, r: 8, vr: 11, life: 10, col: '#fff' }); fx.shake = Math.max(fx.shake, 11); fx.flash = Math.max(fx.flash, 2); } // Lv3 をガード：大きく押される
+        break;
+      case 'chgup': { // ための段階が上がった瞬間：体から光の輪。Lv3 到達時だけ小さく画面が震える
+        const col = CHG_COL(e.lv, CHARS[b.f[e.s].ci].col.g);
+        fx.rings.push({ x: e.x, y: e.y - 70, r: 12, vr: 5 + e.lv * 2, life: 10, col }); sparks(e.x, e.y - 50, col, 3 + e.lv * 3, 3 + e.lv);
+        if (e.lv === 3) { fx.rings.push({ x: e.x, y: e.y - 70, r: 4, vr: 13, life: 9, col: '#fff' }); fx.shake = Math.max(fx.shake, 5); }
+        break;
+      }
+      case 'chg': { // チャージ攻撃を放った瞬間：足元の土煙と、段階の表示
+        dust(e.x, 3 + e.lv * 2, 1.5 + e.lv);
+        fx.texts = fx.texts.filter(t => t.kind !== 'cmd' + e.s);
+        fx.texts.push({ kind: 'cmd' + e.s, x: e.s ? 800 : 160, y: 190, str: e.lv === 3 ? 'フルチャージ！' : 'ため Lv' + e.lv, life: 60, col: CHG_COL(e.lv, CHARS[b.f[e.s].ci].col.g), size: e.lv === 3 ? 28 : 22 });
+        break;
+      }
       case 'sp': { const ch = CHARS[b.f[e.s].ci]; fx.rings.push({ x: e.x, y: e.y, r: 10, vr: 9, life: 14, col: ch.col.g }); fx.cut = { s: e.s, str: ch.sp.name, col: ch.col.g, life: 60 }; break; }
       case 'warp': sparks(e.x, e.y, '#3dff9a', 10, 5); break;
       case 'shot': fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 5, life: 8, col: CHARS[b.f[e.s].ci].col.g }); break;
       case 'dash': dust(e.x, 5, 2); break;
+      case 'cmd': { // コマンドコンボ発動：技名をコンボ数表示の下に短時間出す（キャラのテーマカラー）＋足元から光の輪
+        const ch = CHARS[b.f[e.s].ci], nm = ch.cmds[e.n].name;
+        fx.texts = fx.texts.filter(t => t.kind !== 'cmd' + e.s);
+        fx.texts.push({ kind: 'cmd' + e.s, x: e.s ? 800 : 160, y: 190, str: (ch.cmds[e.n].adv ? '★' : '') + nm, life: ch.cmds[e.n].adv ? 110 : 80, col: ch.col.g, size: nm.length > 10 ? 19 : nm.length > 8 ? 22 : 26 }); // 上級（BRIEF8）は ★ つきで少し長く出す
+        fx.rings.push({ x: e.x, y: e.y + 60, r: 14, vr: 7, life: 12, col: ch.col.g });
+        break;
+      }
       case 'sw': if (e.v === 1) dust(e.x, 4, 2.5); else if (e.m && e.m.length === 2 && (e.m[0] === 'f' || e.m[0] === 'b')) dust(e.x, 3, 1.6); break; // ダッシュ攻撃の踏み切り／前進技・後退技の足元
       case 'land': dust(e.x, e.h ? 10 : 6, e.h ? 4 : 2.8); fx.shake = Math.max(fx.shake, e.h ? 6 : 2.5); break; // 落下攻撃の着地
       case 'ko': fx.shake = 16; fx.flash = 6; break;
@@ -881,6 +955,13 @@
       if (i) c.fillRect(mx + mw * (1 - mf), 50, mw * mf, 6); else c.fillRect(mx, 50, mw * mf, 6);
       c.fillStyle = 'rgba(8,2,24,.9)'; c.fillRect(mx + mw / 2 - 1, 49, 2, 8);
       text(c, ready ? '必殺 OK' : '必殺', i ? mx - 6 : mx + mw + 6, 54, 11, ready ? '#ffd447' : '#b9a8ff', i ? 'right' : 'left');
+      // ためゲージ（BRIEF7）：必殺ゲージのすぐ下の細いバー。ため中だけ伸び、Lv1 / Lv2 の境目に目盛り。満タン（Lv3）で色が変わって点滅する。放った直後はその Lv のまま残す
+      const rl = f.st === 'atk' && N.isChg(f.atk) ? +f.atk[1] : 0, cgN = f.st === 'atk' && f.cb ? f.chg : rl ? N.CHG_LV[rl - 1] : 0, cl = rl || N.chgLv(cgN), cf = cgN / N.CHG_LV[2];
+      const ccol = cl === 3 ? (Math.floor(T / 4) % 2 ? '#fff' : '#ff7a3d') : cl === 2 ? '#ffe066' : cl === 1 ? '#5fe0ff' : '#9fb4d8';
+      c.fillStyle = 'rgba(8,2,24,.8)'; c.fillRect(mx - 1, 60, mw + 2, 7);
+      c.fillStyle = ccol; if (i) c.fillRect(mx + mw * (1 - cf), 61, mw * cf, 5); else c.fillRect(mx, 61, mw * cf, 5);
+      c.fillStyle = 'rgba(255,255,255,.55)'; for (const q of [N.CHG_LV[0] / N.CHG_LV[2], N.CHG_LV[1] / N.CHG_LV[2]]) c.fillRect(mx + mw * (i ? 1 - q : q) - 1, 60, 2, 7);
+      text(c, cgN ? (cl === 3 ? 'ため MAX' : 'ため Lv' + cl) : 'ため', i ? mx - 6 : mx + mw + 6, 65, 10, cgN ? (cl === 3 ? '#ff7a3d' : ccol) : '#7f8bb0', i ? 'right' : 'left');
       // ラウンド取得マーク
       for (let k = 0; k < N.WINS; k++) { const px = i ? 536 + k * 18 : 424 - k * 18; c.fillStyle = k < f.wins ? '#ffd447' : 'rgba(8,2,24,.8)'; c.strokeStyle = '#fff'; c.lineWidth = 1.5; c.beginPath(); c.moveTo(px, 60); c.lineTo(px + 6, 66); c.lineTo(px, 72); c.lineTo(px - 6, 66); c.closePath(); c.fill(); c.stroke(); }
     }
@@ -943,6 +1024,7 @@
     const front = b.f[1].st === 'atk' ? 1 : 0;
     drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front], slot: 1 - front, frame: b.frame });
     drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front], slot: front, frame: b.frame });
+    drawCharge(c, b.f[0], b.frame); drawCharge(c, b.f[1], b.frame);
     for (const p of b.p) drawProj(c, p, b);
     drawFx(c); drawPetals(c, T);
     c.restore();
