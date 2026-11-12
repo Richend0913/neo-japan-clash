@@ -1,7 +1,7 @@
 // NEO JAPAN CLASH — 画面遷移・モード進行・メインループ
 (function () {
   'use strict';
-  const N = window.NJC, CHARS = N.CHARS, STAGES = N.STAGES, Shop = window.NJCShop, K = N.K, INITIAL = N.INITIAL, D = N.Draw, A = N.Audio, I = N.Input, Net = N.Net;
+  const N = window.NJC, CHARS = N.CHARS, STAGES = N.STAGES, Shop = window.NJCShop, Acc = window.NJCAccount || null, K = N.K, INITIAL = N.INITIAL, D = N.Draw, A = N.Audio, I = N.Input, Net = N.Net;
   const cv = document.getElementById('game'), ctx = cv.getContext('2d', { alpha: false }); // 不透明キャンバス（合成が軽い）
   const W = 960, H = 540, PI = Math.PI;
   let ratio = 1;
@@ -56,10 +56,14 @@
     const col = save.col && typeof save.col === 'object' ? save.col : {};
     save.col = {}; for (const c of CHARS) if (col[c.id] === 0 || col[c.id] === 1 || col[c.id] === 2) save.col[c.id] = col[c.id];
     save.wins = nat(save.wins); save.losses = nat(save.losses);
+    save.savedAt = nat(save.savedAt); // BRIEF11: 最後に変更を保存した時刻（ms）。旧セーブには無いので 0
     return fresh;
   }
-  function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 同上 */ } }
-  if (normalizeSave()) persist();
+  // BRIEF11: persist() は「遊んだ結果の変更」を保存する。savedAt を刻み、サインイン中ならクラウド同期（2秒まとめて送信）を予約する。
+  // writeSave() は書き込みだけ（起動時のプレイヤーID 自動作成と、クラウド側のセーブを取り込むとき。savedAt を「いま」にしない）。
+  function writeSave() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 同上 */ } }
+  function persist() { save.savedAt = Date.now(); writeSave(); if (Acc) Acc.touch(); }
+  if (normalizeSave()) writeSave();
   Shop.bind({ get: k => save.ent[k], set(k, v) { save.ent[k] = v ? 1 : 0; persist(); } });
   // 隠しキャラ：従来の条件で解放済み、または全キャラ解放パックを所有（両立）
   const isUnlocked = ci => ci < INITIAL || !!save.un[CHARS[ci].id] || Shop.owned('njc_unlock_all');
@@ -109,6 +113,25 @@
   }
   function applyMute() { A.setMuted(save.mute); document.getElementById('bMute').classList.toggle('off', save.mute); }
   applyMute();
+  // ---- BRIEF11: クラウドセーブ同期（js/account.js）にセーブの出し入れ口を渡す ----
+  // ent（買い切りパックの権利）は、どちらのセーブを採用しても OR でまとめる（買った権利を失わない）
+  const ENT_KEY = /^[a-z0-9_]{1,32}$/;
+  function orEnt(from) { let grew = false; if (from && typeof from === 'object') for (const k of Object.keys(from)) if (from[k] && ENT_KEY.test(k) && !save.ent[k]) { save.ent[k] = 1; grew = true; } return grew; }
+  if (Acc) Acc.bind({
+    snapshot() { const o = {}; for (const k of SAVE_FIELDS) o[k] = save[k]; o.savedAt = save.savedAt; return o; },
+    savedAt: () => save.savedAt,
+    // サーバー側のセーブを採用する（pid もサーバー側になる）。戻り値：端末側の権利を足した（＝サーバーへ送り直す必要がある）か
+    adopt(q, updatedAt) {
+      const mine = Object.assign({}, save.ent);
+      for (const k of Object.keys(save)) delete save[k];
+      for (const k of SAVE_FIELDS) if (k in q) save[k] = q[k];
+      normalizeSave(); const grew = orEnt(mine);
+      save.savedAt = grew ? Date.now() : nat(updatedAt); writeSave(); applyMute();
+      return grew;
+    },
+    // 端末側のセーブを残すとき：サーバー側にだけある権利を足す
+    mergeEnt(e) { const grew = orEnt(e); if (grew) { save.savedAt = Date.now(); writeSave(); } return grew; },
+  });
 
   // ---- 共通 UI ----
   let T = 0, scr = null, btns = [], focus = 0, toast = null, prev = 0;
@@ -653,6 +676,32 @@
     }
   }
   const ACCOUNT_NOTE = 'クラウドセーブ（Sign in with Apple）はアプリ版アップデートで提供予定';
+  // ---- BRIEF11: アカウント（クラウドセーブ）。Web 版はサインイン橋が無いので、従来の案内文のまま ----
+  const ACC_OFF = { available: false, signedIn: false, status: 'idle', error: '' };
+  const accState = () => (Acc ? Acc.state() : ACC_OFF);
+  const ACC_ERR = { network: '通信できませんでした', expired: 'サインインの有効期限が切れました', too_large: 'セーブが大きすぎて保存できません', conflict: '別の端末の変更と重なりました', server: 'サーバーで問題が起きました' };
+  function accHead() {
+    const a = accState();
+    if (!a.signedIn) return a.error === 'expired' ? '未連携（期限切れ。もう一度サインインしてください）' : '未連携（この端末だけに保存）';
+    return '連携中 ― ' + (a.status === 'syncing' ? '同期中…' : a.status === 'error' ? '同期できていません' : a.status === 'synced' ? '同期済み' : '待機中');
+  }
+  function accNote() {
+    const a = accState();
+    if (a.signedIn) return a.status === 'error' ? (ACC_ERR[a.error] || ACC_ERR.server) + '（次のセーブ時に再試行）' : 'Apple でサインイン済み（クラウドセーブ有効）';
+    return a.available ? 'サインインすると、セーブをクラウドに保存できます' : ACCOUNT_NOTE;
+  }
+  let accBusy = false;
+  function accSignIn() {
+    if (!Acc || accBusy) return;
+    accBusy = true; toastMsg('Apple でサインインしています…', 600);
+    Acc.signIn().then(r => {
+      accBusy = false;
+      if (r.status === 'signed_in') { A.play('unlock'); toastMsg(r.synced ? 'サインインしました。クラウドセーブと同期しました' : 'サインインしました（同期はまだです。次にセーブしたときに再試行します）', 240); }
+      else if (r.status === 'cancelled') toastMsg('サインインをやめました', 100);
+      else { A.play('ng'); toastMsg(r.why === 'network' ? 'サーバーに接続できませんでした。通信環境を確認して、もう一度お試しください' : r.status === 'unavailable' ? 'サインインは iOS アプリ版で行えます' : 'サインインできませんでした。時間をおいて、もう一度お試しください', 260); }
+    }, () => { accBusy = false; A.play('ng'); toastMsg('サインインできませんでした。時間をおいて、もう一度お試しください', 260); });
+  }
+  function accSignOut() { if (!Acc) return; Acc.signOut(); toastMsg('サインアウトしました（この端末のセーブはそのまま残ります）', 220); }
   const shortPid = () => save.pid.slice(0, 8) + '…';
   function MyPage(f) {
     D.preloadPortraits();
@@ -660,19 +709,31 @@
     const list = items.map((it, i) => ({ x: 166 + i * 127, y: 284, w: 120, h: 38, size: 16, label: it[0], act: it[1] }));
     list.push({ x: 166, y: 332, w: 247, h: 38, size: 16, label: 'セーブコード（発行・読み込み）', act: openCode });
     list.push({ x: 420, y: 332, w: 150, h: 38, size: 16, label: '× もどる', act: toTitle, snd: 'back' });
-    setBtns(list, f || 0);
+    // BRIEF11: アカウント欄のボタン。サインイン橋（アプリ版）がある時だけ「Sign in with Apple」、サインイン中は「サインアウト」「削除」。
+    // Web 版（橋なし・未サインイン）ではボタンを足さない＝従来どおり案内文だけ
+    const base = list.length; let sig = '';
+    const accSig = () => { const a = accState(); return (a.signedIn ? 2 : a.available ? 1 : 0) + ''; };
+    function build(fc) {
+      const a = accState(), l = list.slice(0, base);
+      if (a.signedIn) {
+        l.push({ x: 428, y: 392, w: 100, h: 38, size: 13, label: 'サインアウト', id: 'accOut', act: accSignOut });
+        l.push({ x: 534, y: 392, w: 230, h: 38, size: 13, label: 'アカウントとクラウドデータを削除', id: 'accDel', col: '#ff5d6c', act: openDel });
+      } else if (a.available) l.push({ x: 548, y: 392, w: 216, h: 38, size: 15, label: 'Sign in with Apple', id: 'accIn', act: accSignIn });
+      setBtns(l, Math.min(fc || 0, l.length - 1)); sig = accSig();
+    }
+    build(f || 0);
     function pickMain() {
       go(Select({ title: 'マイページ：メインキャラを選択', cur: mainCharIdx(), onBack: () => go(MyPage(1)), onPick(ci) { save.mainChar = CHARS[ci].id; persist(); go(MyPage(1)); } }));
     }
     return {
       kind: 'mypage', back: toTitle,
       // 画面に出している内容（自動確認用）
-      get info() { return { pid: save.pid, pidShort: shortPid(), pname: save.pname, title: equipped('titles').name, frame: equipped('frames').id, bg: equipped('bgs').id, main: CHARS[mainCharIdx()].id, wins: save.wins, losses: save.losses, clears: save.clears, onlineWins: save.onlineWins, account: ACCOUNT_NOTE }; },
-      update(m, pr) { menuUpdate(pr); },
+      get info() { return { pid: save.pid, pidShort: shortPid(), pname: save.pname, title: equipped('titles').name, frame: equipped('frames').id, bg: equipped('bgs').id, main: CHARS[mainCharIdx()].id, wins: save.wins, losses: save.losses, clears: save.clears, onlineWins: save.onlineWins, account: accNote(), accountHead: accHead(), accountButtons: btns.filter(b => b.id).map(b => b.id) }; },
+      update(m, pr) { if (accSig() !== sig) build(focus); menuUpdate(pr); },
       draw() {
         bg(0.6, equipped('bgs').stage); header('MY PAGE');
         const mc = mainCharIdx(), px = 166, py = 70, pw = 150, ph = 196;
-        D.drawPortrait(ctx, mc, px, py, pw, ph, { t: T, nameSize: 16 }); drawFrame(equipped('frames').id, px, py, pw, ph);
+        D.drawPortrait(ctx, mc, px, py, pw, ph, { t: T, nameSize: 16, front: true }); drawFrame(equipped('frames').id, px, py, pw, ph);
         const ix = 336, iw = 458; panel(ix, 62, iw, 212, '#5fe0ff', 0.84);
         ctx.fillStyle = 'rgba(90,60,10,.7)'; rr(ix + 14, 72, 250, 26, 6); ctx.fill(); ctx.strokeStyle = '#ffd447'; ctx.lineWidth = 1.5; rr(ix + 14, 72, 250, 26, 6); ctx.stroke();
         D.text(ctx, '称号', ix + 24, 86, 11, '#ffe9a8'); textFit(equipped('titles').name, ix + 60, 86, 16, '#ffd447', 'left', 196, false, 11);
@@ -686,12 +747,18 @@
           const x = ix + 14 + k * 108, y = 202; ctx.fillStyle = 'rgba(4,0,14,.55)'; rr(x, y, 102, 60, 6); ctx.fill();
           D.text(ctx, r[0], x + 51, y + 14, 11, '#cfe9ff', 'center'); D.text(ctx, String(r[1]), x + 51, y + 40, 26, r[2], 'center', true);
         });
+        // アカウント欄。Web 版は案内だけ（ボタンなし）。アプリ版はこの枠の中にボタンが乗るので、枠を先に描く
+        const a = accState();
+        panel(166, 384, 628, 54, a.signedIn ? '#2f8f6f' : '#5b5770', 0.72);
         drawBtns();
-        // アカウント欄（将来用）：案内だけ。ボタンではない
-        panel(166, 384, 628, 54, '#5b5770', 0.72);
-        D.text(ctx, 'アカウント', 180, 400, 12, '#b9b3d6'); D.text(ctx, '未連携（この端末だけに保存）', 780, 400, 11, '#b9b3d6', 'right');
-        D.text(ctx, ACCOUNT_NOTE, 180, 422, 13, '#cfe9ff');
-        D.text(ctx, 'いまのセーブはこの端末の中だけにあります。機種変更やデータ消去の前に、セーブコードを発行して控えてください', 480, 456, 11, '#ffe9a8', 'center');
+        if (!a.signedIn && !a.available) { // Web 版：従来どおり案内だけ
+          D.text(ctx, 'アカウント', 180, 400, 12, '#b9b3d6'); D.text(ctx, accHead(), 780, 400, 11, '#b9b3d6', 'right');
+          D.text(ctx, accNote(), 180, 422, 13, '#cfe9ff');
+        } else {                           // アプリ版：左に状態、右にボタン
+          D.text(ctx, 'アカウント', 180, 400, 12, a.signedIn ? '#4dffb4' : '#b9b3d6'); textFit(accHead(), 250, 400, 11, a.signedIn ? '#4dffb4' : '#b9b3d6', 'left', a.signedIn ? 170 : 290, false, 8);
+          textFit(accNote(), 180, 422, 12, '#cfe9ff', 'left', a.signedIn ? 240 : 360, false, 8);
+        }
+        D.text(ctx, a.signedIn ? 'セーブはクラウドにも保存されます（変更のたびに自動で同期）。サインアウトしても、この端末のセーブは残ります' : 'いまのセーブはこの端末の中だけにあります。機種変更やデータ消去の前に、セーブコードを発行して控えてください', 480, 456, 11, '#ffe9a8', 'center');
       },
     };
   }
@@ -723,7 +790,7 @@
         bg(kind === 'bgs' ? 0.45 : 0.66, kind === 'bgs' ? it.stage : equipped('bgs').stage); header('MY PAGE ― ' + EQ_TITLE[kind], '装備する項目を選んでください（鍵つきは未所有）');
         drawBtns();
         if (kind === 'frames') {
-          const px = 592, py = 86; D.drawPortrait(ctx, mainCharIdx(), px, py, 150, 196, { t: T, nameSize: 16 }); drawFrame(it.id, px, py, 150, 196);
+          const px = 592, py = 86; D.drawPortrait(ctx, mainCharIdx(), px, py, 150, 196, { t: T, nameSize: 16, front: true }); drawFrame(it.id, px, py, 150, 196);
           D.text(ctx, it.name, px + 75, py + 232, 15, itemOpen(it) ? '#fff' : '#b9b3d6', 'center');
         } else if (kind === 'bgs') {
           const px = 496, py = 76; panel(px - 6, py - 6, 302, 208, itemOpen(it) ? '#ffd447' : '#8d86b3', 0.86);
@@ -738,7 +805,7 @@
   // ---- DOM オーバーレイ（名前変更・セーブコード）。開いている間は body.modal が付き、input.js はキーもタッチも拾わない ----
   const $ = id => document.getElementById(id), ovl = $('ovl');
   let ovOpen = '', pendingCode = null;
-  function openOv(id) { ovOpen = id; for (const k of ['ovName', 'ovCode']) $(k).hidden = k !== id; ovl.hidden = false; document.body.classList.add('modal'); I.keys = 0; }
+  function openOv(id) { ovOpen = id; for (const k of ['ovName', 'ovCode', 'ovDel']) $(k).hidden = k !== id; ovl.hidden = false; document.body.classList.add('modal'); I.keys = 0; }
   function closeOv() { ovOpen = ''; pendingCode = null; ovl.hidden = true; document.body.classList.remove('modal'); const a = document.activeElement; if (a && a.blur) a.blur(); }
   const ovMsg = (id, cls, str) => { const e = $(id); e.className = 'ovmsg' + (cls ? ' ' + cls : ''); e.textContent = str || ''; };
   function openName() { openOv('ovName'); const i = $('ovNameIn'); i.value = save.pname; ovMsg('ovNameMsg'); setTimeout(() => { i.focus(); i.select(); }, 0); }
@@ -767,6 +834,21 @@
     ovMsg('ovCodeMsg', 'ok', 'セーブコードを読み込みました（解放状況・購入済みパック・名前・カラーを反映）');
   }
   function codeNo() { codeConfirm(false); ovMsg('ovCodeMsg', '', 'やめました。セーブは変更していません'); }
+  // BRIEF11: アカウント削除の確認（App Store 5.1.1(v)）。「削除する」で初めて DELETE /account を送る
+  let delBusy = false;
+  function delMode(done) { $('ovDelAsk').hidden = done; $('ovDelDone').hidden = !done; $('ovDelText').hidden = done; $('ovDelAfter').hidden = !done; }
+  function openDel() { if (!Acc || !Acc.signedIn()) return; openOv('ovDel'); delBusy = false; $('ovDelYes').disabled = false; delMode(false); ovMsg('ovDelMsg'); }
+  function delYes() {
+    if (delBusy || !Acc) return;
+    delBusy = true; $('ovDelYes').disabled = true; ovMsg('ovDelMsg', '', '削除しています…');
+    Acc.deleteAccount().then(r => {
+      delBusy = false; $('ovDelYes').disabled = false;
+      if (r.status === 'deleted') { delMode(true); A.play('ok'); ovMsg('ovDelMsg', 'ok', 'クラウドのデータを削除し、サインアウトしました'); }
+      else if (r.status === 'deleted_session_expired' || r.status === 'not_signed_in') ovMsg('ovDelMsg', 'err', 'サインインの有効期限が切れていたため、削除できませんでした。もう一度サインインしてからやり直してください');
+      else ovMsg('ovDelMsg', 'err', (r.why === 'network' ? '通信できませんでした' : 'サーバーで問題が起きました') + '。まだ削除されていません。もう一度お試しください');
+    });
+  }
+  $('ovDelNo').addEventListener('click', () => { if (!delBusy) closeOv(); }); $('ovDelYes').addEventListener('click', delYes); $('ovDelClose').addEventListener('click', closeOv);
   $('ovNameOk').addEventListener('click', commitName); $('ovNameCancel').addEventListener('click', closeOv);
   $('ovCodeClose').addEventListener('click', closeOv); $('ovCodeIssue').addEventListener('click', codeIssue); $('ovCodeCopy').addEventListener('click', codeCopy);
   $('ovCodeLoad').addEventListener('click', codeLoad); $('ovCodeYes').addEventListener('click', codeYes); $('ovCodeNo').addEventListener('click', codeNo);
@@ -775,7 +857,7 @@
   addEventListener('keydown', e => {
     if (!ovOpen) return;
     e.stopPropagation();
-    if (e.key === 'Escape') { e.preventDefault(); if (pendingCode) codeNo(); else closeOv(); }
+    if (e.key === 'Escape') { e.preventDefault(); if (pendingCode) codeNo(); else if (!delBusy) closeOv(); }
     else if (e.key === 'Enter' && e.target === $('ovNameIn') && !e.isComposing && e.keyCode !== 229) { e.preventDefault(); commitName(); }
   }, true);
 
@@ -1013,5 +1095,5 @@
   // grant / revoke はテスト用：買い切りパックの権利を直接立てる／下ろして保存する（決済は通らない。本番の購入経路ではない）
   N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, get ratio() { return ratio; }, get toast() { return toast ? toast.str : ''; }, get T() { return T; }, on, save, isUnlocked, tick, render, fps: fpsStats, adapt,
     grant: id => Shop.setOwned(id, true), revoke: id => Shop.setOwned(id, false), ownedStages: () => ownedStages().map(st => st.id),
-    colorOf, makeSaveCode, readSaveCode, get overlay() { return ovOpen; } };
+    colorOf, makeSaveCode, readSaveCode, get overlay() { return ovOpen; }, account: Acc };
 })();

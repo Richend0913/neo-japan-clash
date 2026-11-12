@@ -75,6 +75,9 @@
   const vOf = v => (v === 1 || v === 2 ? v : 0), vKey = v => (vOf(v) ? '@v' + vOf(v) : ''), vFile = v => (vOf(v) ? '_v' + vOf(v) : '');
   function wantIdle(ci, v) { const id = CHARS[ci].id; if (ART[id]) want('s:' + id + vKey(v), `assets/sprites/${id}${vFile(v)}.webp`, ART[id][0]); }
   function wantPortrait(ci) { const id = CHARS[ci].id; if (ART[id]) want('p:' + id, `assets/portraits/${id}.webp`); }
+  // BRIEF12: 正面ポートレート（assets/portraits/<id>_front.webp・374×374・透過）。マイページのメインキャラ表示だけで使う。
+  // 同じ遅延読み込み（want）に乗せ、キーは 'pf:<id>'。読み込み前・失敗時は frontOf が null を返す＝従来ポートレートのまま。
+  function wantFront(ci) { const id = CHARS[ci].id; if (ART[id]) want('pf:' + id, `assets/portraits/${id}_front.webp`); }
   function wantPose(ci, ps, v) { const id = CHARS[ci].id, n = POSES.indexOf(ps); if (ART[id] && n >= 0) want('s:' + id + ':' + ps + vKey(v), `assets/sprites/${id}_${ps}${vFile(v)}.webp`, ART[id][n + 1]); }
   function preloadFighter(ci, v) { wantIdle(ci, v); wantPortrait(ci); POSES.forEach(ps => wantPose(ci, ps, v)); }
   function preloadPortraits() { CHARS.forEach((c, i) => wantPortrait(i)); }
@@ -82,6 +85,7 @@
   const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
   const spriteOf = (ci, v) => { wantIdle(ci, v); return ready('s:' + CHARS[ci].id + vKey(v)); };
   const portraitOf = ci => { wantPortrait(ci); return ready('p:' + CHARS[ci].id); };
+  const frontOf = ci => { wantFront(ci); return ready('pf:' + CHARS[ci].id); };
   const poseOf = (ci, ps, v) => { wantPose(ci, ps, v); return ready('s:' + CHARS[ci].id + ':' + ps + vKey(v)); };
   // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
   function anchorX(e, id) {
@@ -116,7 +120,7 @@
     return cv;
   }
   const clamp01 = v => Math.max(0, Math.min(1, v));
-  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), variants: Object.keys(IMG).filter(k => /@v[12]$/.test(k) && IMG[k].ok), requested: Object.keys(IMG).filter(k => /@v[12]$/.test(k)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
+  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), fronts: Object.keys(ART).filter(id => ready('pf:' + id)), variants: Object.keys(IMG).filter(k => /@v[12]$/.test(k) && IMG[k].ok), requested: Object.keys(IMG).filter(k => /@v[12]$/.test(k)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
 
   // ================= ステージ =================
   let stageCv = null;
@@ -1074,7 +1078,7 @@
     if (o.locked) { g.addColorStop(0, '#1b1830'); g.addColorStop(1, '#0a0816'); } else { g.addColorStop(0, '#120a2c'); g.addColorStop(1, ch.col.a === '#12161c' ? '#0c3a2e' : ch.col.a); }
     c.fillStyle = g; c.fillRect(x, y, w, h);
     if (!o.locked) { c.globalAlpha = 0.22; c.fillStyle = ch.col.g; c.beginPath(); c.arc(x + w / 2, y + h * 0.5, w * 0.48, 0, PI * 2); c.fill(); c.globalAlpha = 0.18; c.strokeStyle = ch.col.g; c.lineWidth = 1; for (let k = 0; k < 6; k++) { c.beginPath(); c.moveTo(x, y + k * h / 5); c.lineTo(x + w, y + k * h / 5 - 18); c.stroke(); } c.globalAlpha = 1; }
-    const por = portraitOf(ci);
+    const side = portraitOf(ci), por = (o.front && !o.locked && frontOf(ci)) || side; // o.front: 正面絵（BRIEF12）。未読込・失敗時は従来の絵
     if (por) {
       // 顔寄りの絵をセルに cover フィット（上寄せ）。ロック中は黒く伏せたシルエットにする
       const pw = por.im.naturalWidth, ph = por.im.naturalHeight, k = Math.max(w / pw, h / ph), dw = pw * k, dh = ph * k;

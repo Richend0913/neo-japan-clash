@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/png" href="assets/favicon.png?v=20261112b">
+<link rel="icon" type="image/png" href="assets/favicon.png?v=20261112d">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#07041c">
 <title>NEO JAPAN CLASH（仮）</title>
-<link rel="stylesheet" href="style.css?v=20261112b">
+<link rel="stylesheet" href="style.css?v=20261112d">
 </head>
 <body>
 <canvas id="game" width="960" height="540"></canvas>
@@ -53,18 +53,28 @@
     <div id="ovCodeConfirm" class="ovrow" hidden><button id="ovCodeNo" type="button" class="ovb">やめる</button><button id="ovCodeYes" type="button" class="ovb warn">上書きする</button></div>
     <p class="ovnote small">コードには解放状況・購入済みパックの権利・名前・カラーなどセーブ全体が入ります。他人に見せないでください。</p>
   </div>
+  <!-- BRIEF11: アカウント削除の確認（サインイン中のマイページから開く） -->
+  <div id="ovDel" class="ovbox wide" hidden>
+    <h2>アカウントとクラウドデータの削除</h2>
+    <p id="ovDelText" class="ovnote">クラウドに保存したセーブデータを削除し、サインアウトします。<b>元には戻せません。</b><br>この端末の中のセーブデータと、購入済みのパックはそのまま残ります。</p>
+    <p id="ovDelAfter" class="ovnote" hidden>この端末のセーブデータはそのまま遊べます。もう一度サインインすると、新しくクラウドセーブを始められます。<br>Apple ID 側の連携も外すときは、iPhone の「設定」→ 自分の名前 →「サインインとセキュリティ」→「Apple でサインイン」から、このアプリを削除してください。</p>
+    <p id="ovDelMsg" class="ovmsg"></p>
+    <div id="ovDelAsk" class="ovrow"><button id="ovDelNo" type="button" class="ovb">やめる</button><button id="ovDelYes" type="button" class="ovb warn">削除する</button></div>
+    <div id="ovDelDone" class="ovrow" hidden><button id="ovDelClose" type="button" class="ovb pri">とじる</button></div>
+  </div>
 </div>
 
 <div id="rotate"><div class="phone"></div><p>横にしてください</p><small>このゲームは横画面専用です</small></div>
 
-<script src="js/data.js?v=20261112b"></script>
-<script src="js/sim.js?v=20261112b"></script>
-<script src="js/draw.js?v=20261112b"></script>
-<script src="js/audio.js?v=20261112b"></script>
-<script src="js/input.js?v=20261112b"></script>
-<script src="js/net.js?v=20261112b"></script>
-<script src="js/shop.js?v=20261112b"></script>
-<script src="js/main.js?v=20261112b"></script>
+<script src="js/data.js?v=20261112d"></script>
+<script src="js/sim.js?v=20261112d"></script>
+<script src="js/draw.js?v=20261112d"></script>
+<script src="js/audio.js?v=20261112d"></script>
+<script src="js/input.js?v=20261112d"></script>
+<script src="js/net.js?v=20261112d"></script>
+<script src="js/shop.js?v=20261112d"></script>
+<script src="js/account.js?v=20261112d"></script>
+<script src="js/main.js?v=20261112d"></script>
 <script>
 // 起動ウォッチドッグ：古いキャッシュの混在などで起動が止まった場合、一度だけ開き直して自己回復する
 setTimeout(function () {
