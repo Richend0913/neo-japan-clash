@@ -197,7 +197,17 @@
     else if (e.k === 'land') A.play(e.h ? 'landH' : 'land');
     else if (e.k === 'cmd') A.play('rush'); // コマンドコンボ発動
     else A.play(SND[e.k]);
+    // BRIEF14: キャラボイス（鳴らすかどうか・間隔・優先度は audio.js 側。sim の状態は読むだけ）
+    const vid = i => CHARS[b.f[i].ci].id;
+    if (e.k === 'sw') A.voice(vid(e.s), e.h ? 'atk_h' : 'atk_l');
+    else if (e.k === 'sp') A.voice(vid(e.s), 'special');
+    else if (e.k === 'hit') A.voice(vid(1 - e.s), 'hurt');
+    else if (e.k === 'ko') { for (let i = 0; i < 2; i++) if (b.f[i].hp <= 0) A.voice(vid(i), 'ko'); }
+    else if (e.k === 'over') A.voice(vid(e.s), 'win');
   }
+  // BRIEF14: 画面ごとの BGM。対戦（VS 画面から）はステージ曲、それ以外はタイトル曲。オンライン対戦のステージは常にネオン神社
+  const bgmOf = s => (s.kind === 'battle' || s.kind === 'vs' ? (s.stage || 'neon') : s.kind === 'obattle' ? 'neon' : 'title');
+  const voicePre = (...ci) => A.voicePreload(ci.map(i => CHARS[i].id));
 
   // ================= タイトル =================
   function toTitle() { Net.close(); go(Title()); }
@@ -206,8 +216,8 @@
     'PC：矢印 + J/K/L/U・Q/E（ダッシュ／回避）・Enter　♪：ミュート'];
   function Title() {
     const unlockedN = CHARS.filter((c, i) => isUnlocked(i)).length;
-    const items = [['アーケード', startArcadeSelect], ['フリーバトル', startFree], ['オンライン対戦', startOnline], [`解放状況  ${unlockedN} / ${CHARS.length}`, () => go(Gallery())], ['ショップ', () => go(ShopScreen())], ['マイページ', () => go(MyPage())]];
-    setBtns(items.map((it, i) => ({ x: 340, y: 234 + i * 42, w: 280, h: 36, size: 18, label: it[0], act: it[1] }))); // BRIEF10: 6項目に増えたので 40px・間隔48 → 36px・間隔42 に詰めた
+    const items = [['アーケード', startArcadeSelect], ['フリーバトル', startFree], ['オンライン対戦', startOnline], [`解放状況  ${unlockedN} / ${CHARS.length}`, () => go(Gallery())], ['ショップ', () => go(ShopScreen())], ['マイページ', () => go(MyPage())], ['あそびかた・クレジット', () => go(HelpScreen())]];
+    setBtns(items.map((it, i) => ({ x: 340, y: 230 + i * 36, w: 280, h: 32, size: 17, label: it[0], act: it[1] }))); // BRIEF14: 7項目に増えたので 36px・間隔42 → 32px・間隔36 に詰めた // BRIEF10: 6項目に増えたので 40px・間隔48 → 36px・間隔42 に詰めた
     const demo = [{ ci: 0, x: 120, y: 478, face: 1, st: 'idle', t: 0, vx: 0, atk: '' }, { ci: 1, x: 820, y: 478, face: -1, st: 'idle', t: 0, vx: 0, atk: '' }];
     return {
       kind: 'title', help: HELP,
@@ -222,6 +232,34 @@
         D.text(ctx, 'ネオ・ジャパン・クラッシュ（仮）  ― 和 × 電脳 格闘 ―', 480, 218, 15, '#ffe9a8', 'center');
         drawBtns();
         D.text(ctx, HELP[0], 480, 490, 11, '#cfe9ff', 'center'); D.text(ctx, HELP[1], 480, 506, 11, '#cfe9ff', 'center');
+      },
+    };
+  }
+
+  // ================= あそびかた・クレジット（BRIEF14） =================
+  const HELP_ROWS = [
+    ['移動', 'スティック（PC：矢印キー）。上でジャンプ、空中でもう一度上で2段ジャンプ。下でしゃがみ'],
+    ['攻撃', '○ 弱（J）　× 強（K。押し続けて「ため」）　□ 必殺技（L。ゲージ消費）　△ ガード（U）'],
+    ['ダッシュ／回避', 'L・R（Q・E）かスティックを素早く2回。相手へ向かえばダッシュ、後ろへは回避ステップ（無敵）'],
+    ['コマンドコンボ', '方向 + ○× の順番入力。キャラ選択画面の技表を見てください'],
+    ['メニュー', '○：決定（Enter）　×：もどる（Esc）　Ⅱ：ポーズ　♪：ミュート（M。効果音・BGM・ボイスすべて）'],
+  ];
+  const CREDIT_COLS = 3, creditPos = i => ({ x: 110 + (i % CREDIT_COLS) * 230, y: 377 + Math.floor(i / CREDIT_COLS) * 19 }); // 右下は画面上のボタン（△□○×）に隠れるので、左 3 列に収める
+  function HelpScreen() {
+    setBtns([{ x: 400, y: 486, w: 160, h: 38, label: 'もどる', act: toTitle, snd: 'back' }]);
+    const credits = A.VOICE_CREDITS.map(n => 'VOICEVOX:' + n);
+    return {
+      kind: 'help', back: toTitle, credits,
+      update(m, pr) { menuUpdate(pr); },
+      draw() {
+        bg(0.72); header('あそびかた・クレジット');
+        panel(60, 70, 840, 236, '#5fe0ff', 0.84);
+        HELP_ROWS.forEach((r, i) => { const y = 98 + i * 44; D.text(ctx, r[0], 84, y, 16, '#ffd447', 'left'); textFit(r[1], 250, y, 14, '#fff', 'left', 630); });
+        panel(60, 318, 840, 156, '#ff7ad9', 0.84);
+        D.text(ctx, 'キャラクターボイス', 84, 342, 16, '#ff9df0', 'left'); D.text(ctx, '音声合成ソフト VOICEVOX で生成した音声を使用しています', 250, 342, 13, '#cfe9ff', 'left');
+        credits.forEach((s, i) => { const q = creditPos(i); D.text(ctx, s, q.x, q.y - 14, 15, '#fff', 'left'); });
+        D.text(ctx, 'BGM・効果音：すべてプログラムによる合成（素材なし）', 84, 462, 11, '#cfe9ff', 'left');
+        drawBtns();
       },
     };
   }
@@ -379,8 +417,9 @@
   // ================= VS 画面 =================
   function VS(c0, c1, label, labels, next, stage, v0) { // v0 = P1 のカラー（BRIEF10。ここで絵を読み始めておく。ポートレートは通常色のまま）
     let t = 0; setBtns([]); A.play('special'); D.preloadFighter(c0, v0); D.preloadFighter(c1); if (stage) D.preloadStage(stage);
+    voicePre(c0, c1);
     return {
-      kind: 'vs',
+      kind: 'vs', stage,
       update(m, pr) { t++; if (D.warmFighter(c0, v0)) D.warmFighter(c1); if (t > 120 || (t > 20 && (pr & (K.A | I.OK)))) next(); },
       tap() { if (t > 20) next(); return true; },
       draw() {
@@ -402,7 +441,7 @@
     // BRIEF10: カラーも見た目だけなので view 側に持つ（P1 = 選んだカラー、CPU は通常色固定）
     const col = [o.col === 1 || o.col === 2 ? o.col : 0, 0];
     const b = N.newBattle(o.c0, o.c1), ai = N.newAI(o.lv), view = { ghost: [], labels: o.labels, stage, col };
-    D.preloadStage(stage); D.preloadFighter(o.c0, col[0]);
+    D.preloadStage(stage); D.preloadFighter(o.c0, col[0]); voicePre(o.c0, o.c1);
     let paused = false, done = false, counted = false;
     D.fxClear(); setBtns([]);
     const finish = () => { if (!done) { done = true; o.onEnd(b.winner === 0); } };
@@ -943,7 +982,7 @@
     on.match = m; on.role = m.a === Net.id ? 'a' : m.b === Net.id ? 'b' : 's';
     on.b = N.newBattle(m.ca, m.cb); on.got = !m.late || on.role === 'a'; on.remote = 0; on.pending = []; on.end = null; on.sent = false; on.newUnlock = false;
     on.view = { ghost: [], labels: [nameOf(m.a), nameOf(m.b)] };
-    D.preloadFighter(m.ca); D.preloadFighter(m.cb);
+    D.preloadFighter(m.ca); D.preloadFighter(m.cb); voicePre(m.ca, m.cb);
     D.fxClear(); go(OBattle());
   }
   function OBattle() {
@@ -1028,6 +1067,7 @@
     T++;
     const m = I.mask(), pr = m & ~prev; prev = m;
     scr.update(m, pr);
+    A.bgm(bgmOf(scr));
     if (toast && --toast.life <= 0) toast = null;
   }
   // ---- FPS 統計（直近120フレームの平均と最低）。F キーまたは URL に ?fps で画面にも出す ----
@@ -1098,5 +1138,7 @@
   // grant / revoke はテスト用：買い切りパックの権利を直接立てる／下ろして保存する（決済は通らない。本番の購入経路ではない）
   N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, get ratio() { return ratio; }, get toast() { return toast ? toast.str : ''; }, get T() { return T; }, on, save, isUnlocked, tick, render, fps: fpsStats, adapt,
     grant: id => Shop.setOwned(id, true), revoke: id => Shop.setOwned(id, false), ownedStages: () => ownedStages().map(st => st.id),
-    colorOf, makeSaveCode, readSaveCode, get overlay() { return ovOpen; }, account: Acc };
+    colorOf, makeSaveCode, readSaveCode, get overlay() { return ovOpen; }, account: Acc,
+    // BRIEF14: BGM（いまの曲 id・再生状態）／ボイス／必殺カットイン（表示中か・どのキャラのどの技名か）
+    get bgm() { return A.bgmState; }, get voice() { return A.voiceState; }, get cutin() { return D.cutinState(); } };
 })();

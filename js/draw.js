@@ -826,6 +826,7 @@
 
   // ================= エフェクト =================
   const fx = { parts: [], texts: [], rings: [], slashes: [], shake: 0, flash: 0, cut: null };
+  const CUT_N = 33; // 必殺カットインの長さ（フレーム。33f = 0.55 秒）
   const MAX_PARTS = 150; // 粒子の上限（連続ヒットで増え続けないように。超えた分は古いものから捨てる）
   function part(p) { if (fx.parts.length >= MAX_PARTS) fx.parts.shift(); fx.parts.push(p); }
   function sparks(x, y, col, n, sp) {
@@ -898,7 +899,7 @@
         fx.texts.push({ kind: 'cmd' + e.s, x: e.s ? 800 : 160, y: 190, str: e.lv === 3 ? 'フルチャージ！' : 'ため Lv' + e.lv, life: 60, col: CHG_COL(e.lv, CHARS[b.f[e.s].ci].col.g), size: e.lv === 3 ? 28 : 22 });
         break;
       }
-      case 'sp': { const ch = CHARS[b.f[e.s].ci]; fx.rings.push({ x: e.x, y: e.y, r: 10, vr: 9, life: 14, col: ch.col.g }); fx.cut = { s: e.s, str: ch.sp.name, col: ch.col.g, life: 60 }; break; }
+      case 'sp': { const ch = CHARS[b.f[e.s].ci]; fx.rings.push({ x: e.x, y: e.y, r: 10, vr: 9, life: 14, col: ch.col.g }); wantFront(b.f[e.s].ci); wantPortrait(b.f[e.s].ci); fx.cut = { s: e.s, ci: b.f[e.s].ci, id: ch.id, str: ch.sp.name, who: ch.name, title: ch.title, col: ch.col.g, life: CUT_N, max: CUT_N }; break; } // BRIEF14: 必殺カットイン（連続発動は最新のものに差し替え）
       case 'warp': sparks(e.x, e.y, '#3dff9a', 10, 5); break;
       case 'shot': fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 5, life: 8, col: CHARS[b.f[e.s].ci].col.g }); break;
       case 'dash': dust(e.x, 5, 2); break;
@@ -1010,12 +1011,6 @@
     }
     const sec = Math.ceil(b.timer / 60);
     text(c, String(sec), 480, 36, 44, sec <= 10 ? '#ff5a5a' : '#ffd447', 'center', true);
-    // 必殺技カットイン
-    if (fx.cut) {
-      const k = fx.cut, a = Math.min(1, k.life / 12, (60 - k.life) / 6), x = k.s ? 950 : 10;
-      c.globalAlpha = a * 0.85; c.fillStyle = 'rgba(8,2,24,.8)'; c.fillRect(k.s ? 560 : 0, 96, 400, 34); c.fillStyle = k.col; c.fillRect(k.s ? 560 : 0, 128, 400, 3);
-      c.globalAlpha = a; text(c, k.str, x, 113, 22, k.col, k.s ? 'right' : 'left', true); c.globalAlpha = 1;
-    }
     // フェーズ表示
     if (b.phase === 'intro') {
       if (b.pt < 58) { c.globalAlpha = Math.min(1, b.pt / 8); neonText(c, 'ROUND ' + b.round, 480, 230, 64, '#5fe0ff'); c.globalAlpha = 1; }
@@ -1073,8 +1068,56 @@
     drawFx(c); drawPetals(c, T);
     c.restore();
     if (fx.flash > 0) { c.fillStyle = `rgba(255,255,255,${fx.flash * 0.07})`; c.fillRect(0, 0, W, HH); }
+    if (fx.cut) drawCutinBack(c, fx.cut);
     drawHud(c, b, view, T);
+    if (fx.cut) drawCutinFront(c, fx.cut);
   }
+
+  // ================= 必殺カットイン（BRIEF14。描画だけ。sim の状態は読むだけで、ゲームは止めない） =================
+  // 0.55 秒（CUT_N フレーム）：入り 6f（スライドイン＋閃光）→ 見せ場 → 出 8f（スライドアウト＋フェード）。
+  // 奥（暗転・集中線）は HUD の下、手前（帯・正面ポートレート・技名）は HUD の上に描く。体力バーは暗転の上に残るので、試合の状況は見えたまま
+  const CUT_IN = 6, CUT_OUT = 8;
+  function cutPhase(k) { const el = k.max - k.life, a = Math.min(1, (el + 1) / CUT_IN), o = Math.min(1, k.life / CUT_OUT); return { el, a: 1 - (1 - a) * (1 - a), o, env: Math.min(a, o) }; }
+  function drawCutinBack(c, k) {
+    const q = cutPhase(k), fxX = k.s ? 760 : 200, fy = 300;
+    c.fillStyle = `rgba(4,1,14,${0.6 * q.env})`; c.fillRect(0, 0, W, HH);
+    // 集中線：ポートレートの位置へ向かう細い三角を画面の外周から。毎フレーム少しずつ角度を変えてちらつかせる
+    c.save(); c.globalAlpha = 0.34 * q.env; c.fillStyle = k.col; c.beginPath();
+    for (let i = 0; i < 30; i++) {
+      const a = (i + ((q.el * 0.37 + i * 0.618) % 1)) / 30 * PI * 2, w = 0.012 + ((i * 7 + q.el * 3) % 5) * 0.004, r0 = 150 + ((i * 13 + q.el * 5) % 7) * 22, r1 = 1100;
+      c.moveTo(fxX + Math.cos(a) * r0, fy + Math.sin(a) * r0); c.lineTo(fxX + Math.cos(a - w) * r1, fy + Math.sin(a - w) * r1); c.lineTo(fxX + Math.cos(a + w) * r1, fy + Math.sin(a + w) * r1); c.closePath();
+    }
+    c.fill(); c.restore();
+    if (q.el < 4) { c.fillStyle = `rgba(255,255,255,${0.62 - q.el * 0.16})`; c.fillRect(0, 0, W, HH); } // 開始の閃光
+  }
+  function drawCutinFront(c, k) {
+    const q = cutPhase(k), d = k.s ? -1 : 1, off = (1 - q.a) * 560 + (1 - q.o) * (1 - q.o) * 420; // 自分の側の画面外から入り、同じ側へ抜ける
+    c.save(); c.globalAlpha = Math.min(1, q.o * 1.6);
+    // 斜めの帯（キャラの発光色の縁どり）
+    const bx = -d * off * 0.5, y0 = 196, y1 = 412, sk = 46 * d;
+    c.fillStyle = 'rgba(8,2,24,.86)'; c.beginPath(); c.moveTo(bx - 60 + sk, y0); c.lineTo(bx + W + 60 + sk, y0); c.lineTo(bx + W + 60 - sk, y1); c.lineTo(bx - 60 - sk, y1); c.closePath(); c.fill();
+    c.fillStyle = k.col; c.beginPath(); c.moveTo(bx - 60 + sk, y0); c.lineTo(bx + W + 60 + sk, y0); c.lineTo(bx + W + 60 + sk * 0.9, y0 + 5); c.lineTo(bx - 60 + sk * 0.9, y0 + 5); c.closePath(); c.fill();
+    c.beginPath(); c.moveTo(bx - 60 - sk * 0.9, y1 - 5); c.lineTo(bx + W + 60 - sk * 0.9, y1 - 5); c.lineTo(bx + W + 60 - sk, y1); c.lineTo(bx - 60 - sk, y1); c.closePath(); c.fill();
+    // 正面ポートレート（無ければ通常ポートレート、それも無ければ絵なしで技名だけ）。自分の側から大きくスライドイン
+    const fr = frontOf(k.ci), por = fr || portraitOf(k.ci), cx = (k.s ? 760 : 200) - d * off;
+    if (por) {
+      const ph = fr ? 400 : 330, pw = por.im.naturalWidth / por.im.naturalHeight * ph, zz = Math.abs(c.getTransform().a), py = 462 - ph;
+      c.save(); c.translate(cx, 0); if (!fr && k.s) c.scale(-1, 1); // 通常ポートレートは右向きの絵なので、P2 側は反転する
+      c.globalAlpha *= 0.3; c.drawImage(scaled(por, ph * zz, k.col), -pw / 2 - 14 * (fr ? d : 1), py + 6, pw, ph); // 発光色の影
+      c.globalAlpha = Math.min(1, q.o * 1.6); c.drawImage(scaled(por, ph * zz), -pw / 2, py, pw, ph);
+      c.restore();
+    }
+    // 技名（大きな太字）＋キャラ名（小さく）。帯の中、ポートレートの反対側
+    const tx = (k.s ? 350 : 610) + d * off * 0.8, maxW = 520;
+    let px = 62; MC.font = font(px, true); const tw = MC.measureText(k.str).width; if (tw > maxW) px = Math.max(30, Math.floor(px * maxW / tw));
+    text(c, k.who + '　' + k.title, tx, 250, 19, '#fff', 'center', true);
+    text(c, k.str, tx, 310, px, k.col, 'center', true);
+    c.fillStyle = k.col; c.fillRect(tx - 180, 356, 360, 4);
+    text(c, 'SPECIAL', tx, 380, 15, '#ffe9a8', 'center', true);
+    c.restore();
+  }
+  // テスト・確認用：カットイン表示中か、どのキャラのどの技名か
+  const cutinState = () => (fx.cut ? { on: true, s: fx.cut.s, id: fx.cut.id, name: fx.cut.str, who: fx.cut.who, life: fx.cut.life, max: fx.cut.max, front: !!ready('pf:' + fx.cut.id) } : null);
 
   // キャラ選択用ポートレート
   function drawPortrait(c, ci, x, y, w, h, o) {
@@ -1108,5 +1151,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawStageThumb, drawLock, preloadStage, stageReady: id => !!stageReady(id), drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, variantReady, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawStageThumb, drawLock, preloadStage, stageReady: id => !!stageReady(id), drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, variantReady, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx, cutinState, CUT_N };
 })();
