@@ -8,31 +8,23 @@ html, body {
 body { position: fixed; inset: 0; }
 #game { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: block; background: #07041c; }
 
-#pad { position: fixed; inset: 0; pointer-events: none; --fb: clamp(56px, 7.6vw, 72px); --dp: clamp(140px, 19vw, 180px); }
-body.nopad #dpad, body.nopad #btns, body.nopad .sb { display: none; }
+#pad { position: fixed; inset: 0; pointer-events: none; --fb: clamp(56px, 7.6vw, 72px); }
+body.nopad #stick, body.nopad #btns, body.nopad .sb { display: none; }
 
-/* 十字キー（左下） */
-#dpad {
-  position: absolute; left: max(10px, env(safe-area-inset-left)); bottom: max(20px, env(safe-area-inset-bottom));
-  width: var(--dp); height: var(--dp); border-radius: 50%;
-  background: radial-gradient(circle, rgba(20, 10, 50, .30) 0 62%, rgba(20, 10, 50, .12) 63% 100%);
+/* バーチャルスティック（BRIEF13）。ふだんは左下の定位置に薄く出ていて、左側に触れるとその位置へ台座が移る（位置とノブのずれは input.js が付ける）。直径 --sd も input.js が画面の拡大率から決める */
+#stick {
+  position: absolute; left: max(22px, env(safe-area-inset-left)); bottom: max(26px, env(safe-area-inset-bottom));
+  width: var(--sd, 108px); height: var(--sd, 108px); border-radius: 50%; opacity: .5;
+  background: radial-gradient(circle, rgba(20, 10, 50, .34) 0 58%, rgba(20, 10, 50, .14) 59% 100%);
+  border: 2px solid rgba(160, 235, 255, .5); transition: opacity .12s;
 }
-.da {
-  position: absolute; width: 34%; height: 34%; display: flex; align-items: center; justify-content: center;
-  background: rgba(24, 14, 60, .40); border: 2px solid rgba(160, 235, 255, .55);
-  transition: transform .05s, background .05s;
+#stickKnob {
+  position: absolute; left: 50%; top: 50%; width: 46%; height: 46%; margin: -23% 0 0 -23%; border-radius: 50%;
+  background: radial-gradient(circle at 38% 34%, rgba(200, 245, 255, .55), rgba(60, 40, 130, .6) 70%);
+  border: 2px solid rgba(160, 235, 255, .8); box-shadow: 0 0 10px rgba(95, 224, 255, .35);
 }
-#dU { left: 33%; top: 1%; border-radius: 12px 12px 0 0; border-bottom: none; }
-#dD { left: 33%; bottom: 1%; border-radius: 0 0 12px 12px; border-top: none; }
-#dL { left: 1%; top: 33%; border-radius: 12px 0 0 12px; border-right: none; }
-#dR { right: 1%; top: 33%; border-radius: 0 12px 12px 0; border-left: none; }
-.dc { position: absolute; left: 33%; top: 33%; width: 34%; height: 34%; background: rgba(24, 14, 60, .40); }
-.da i { width: 0; height: 0; border: 9px solid transparent; }
-#dU i { border-bottom-color: rgba(200, 245, 255, .9); margin-top: -9px; }
-#dD i { border-top-color: rgba(200, 245, 255, .9); margin-bottom: -9px; }
-#dL i { border-right-color: rgba(200, 245, 255, .9); margin-left: -9px; }
-#dR i { border-left-color: rgba(200, 245, 255, .9); margin-right: -9px; }
-.da.on { background: rgba(95, 224, 255, .75); box-shadow: 0 0 18px rgba(95, 224, 255, .9); }
+#stick.on { opacity: 1; border-color: rgba(95, 224, 255, .95); box-shadow: 0 0 18px rgba(95, 224, 255, .5); transition: none; }
+#stick.on #stickKnob { background: radial-gradient(circle at 38% 34%, #eafcff, rgba(95, 224, 255, .85) 70%); box-shadow: 0 0 18px rgba(95, 224, 255, .9); }
 
 /* △□○×（右下・ダイヤ配置） */
 #btns {

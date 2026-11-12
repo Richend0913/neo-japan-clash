@@ -344,7 +344,7 @@
       case 'jump': return P({ lean: 0.15, lF: AIR_F, lB: AIR_B, aF: [1.2, 2.2], aB: [-0.7, -0.2] });
       case 'crouch': return P({ lean: 0.3, lF: CROUCH_F, lB: CROUCH_B, aF: [0.7, 2.1] });
       case 'guard': case 'block': { const g = P({ lean: f.st === 'block' ? -0.2 : -0.06, aF: [1.25, 2.95], aB: [1.05, 2.75], w: 3.05 }); if (f.cr) { g.lF = CROUCH_F; g.lB = CROUCH_B; } return g; }
-      case 'dash': { const fw = (f.vx > 0 ? 1 : -1) === f.face; return P({ lean: fw ? 0.55 : -0.3, lF: [0.95, -0.3], lB: [-0.9, -1.2], aB: [-0.8, -0.3] }); }
+      case 'dash': case 'evade': { const fw = (f.vx > 0 ? 1 : -1) === f.face; return P({ lean: fw ? 0.55 : -0.3, lF: [0.95, -0.3], lB: [-0.9, -1.2], aB: [-0.8, -0.3] }); }
       case 'hit': return P({ lean: -0.45, aF: [-0.3, 0.7], aB: [-0.9, -0.2], lF: [0.4, 0.1], lB: [-0.2, -0.5], w: 1 });
       case 'ko': return P({ lean: -0.25, aF: [-0.6, -0.2], aB: [-1.2, -0.8], lF: [0.5, 0.2], lB: [0.1, -0.3], w: 0.6 });
       case 'atk': {
@@ -641,6 +641,7 @@
   }
   // ポーズ切替のクロスフェード用に、直前に描いたポーズ絵を覚えておく（描画側だけの記憶。sim には触らない）
   const poseMem = [{}, {}], XFADE = [0.6, 0.36, 0.16];
+  const EV_COL = '#5fe0ff';
   function drawSprite(c, f, o, idle) {
     const ch = CHARS[f.ci], t = f.t, st = f.st, g = ch.col.g;
     const m = st === 'atk' ? N.mv(ch, f.atk) : null, ty = m && f.atk === 's' ? m.type : '';
@@ -652,10 +653,12 @@
     const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
     const fw = (f.vx >= 0 ? 1 : -1) === f.face; // 前進中か
     // dx,dy=ずらし（+x は相手方向）  rot=傾き（+ は前傾）  py=回転の中心の高さ  white=白フラッシュの濃さ  ghost=残像の枚数  streak=スピード線（1=水平 2=斜め下）
-    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, ga = 0.3, streak = 0, gfix = 0, alpha = o.alpha == null ? 1 : o.alpha;
+    let dx = 0, dy = 0, rot = 0, sx = 1, sy = 1, py = 0, white = 0, ghost = 0, ga = 0.3, streak = 0, gfix = 0, gcol = '', tint = 0, alpha = o.alpha == null ? 1 : o.alpha;
     switch (st) {
       case 'walk': rot = (fw ? 1 : -1) * 0.05 * Math.min(1, t / 5); dy = -Math.abs(Math.sin(t * Math.abs(f.vx) * 0.07)) * 3; break; // 進行方向へ最大約3°傾く。上下動は移動速度に同期
       case 'dash': rot = fw ? 0.2 : -0.14; dy = -3; ghost = 3; break;
+      // BRIEF13 回避ステップ：水色の残像を長く引き、無敵のあいだ（f.inv > 0）は本体も水色に透ける。無敵が切れると本体は元に戻り、残像も減速とともに消える（通常ダッシュ＝キャラ色のままの残像3枚、と区別する）
+      case 'evade': rot = -0.2; dy = -3; ghost = f.inv > 0 ? 5 : 2; ga = 0.62; gcol = EV_COL; if (f.inv > 0) { tint = 0.3; alpha *= 0.9; } break;
       case 'jump': py = H * 0.5; rot = Math.max(-0.22, Math.min(0.22, f.vy * 0.011 + f.vx * f.face * 0.012)); break;
       case 'crouch': sy = 0.74; sx = 1.05; break;
       case 'guard': case 'block': // ガード絵があれば絵に任せ、無ければ従来の沈み込み
@@ -737,12 +740,14 @@
     const gs = gfix || (Math.abs(f.vx) > 1 ? -f.vx * f.face * 3.2 : 0), gy = streak === 2 ? -f.vy * 2.2 : 0;
     // 残像・クロスフェード・白フラッシュは薄い重ね描きなので補間なし（最近傍）で貼る。重ね描きが続く瞬間のコマ落ちを減らすため
     c.imageSmoothingEnabled = false;
-    if (gs || gy) for (let n = ghost; n >= 1; n--) { c.globalAlpha = alpha * ga / n; c.save(); c.translate(dx + gs * n, dy - py + gy * n); c.rotate(rot); c.scale(sx, sy); c.drawImage(src, -ax, py - H, Wd, H); c.restore(); }
+    const gsrc = gcol ? scaled(e, H * z, gcol) : src; // 回避ステップの残像は水色のシルエット
+    if (gs || gy) for (let n = ghost; n >= 1; n--) { c.globalAlpha = (gcol ? 1 : alpha) * ga / (gcol ? 0.6 + n * 0.4 : n); c.save(); c.translate(dx + gs * n, dy - py + gy * n); c.rotate(rot); c.scale(sx, sy); c.drawImage(gsrc, -ax, py - H, Wd, H); c.restore(); }
     c.imageSmoothingEnabled = true;
     put(src, alpha, 0, Wd, ax);
     c.imageSmoothingEnabled = false;
     if (old) { const ow = old.im.naturalWidth * H / old.im.naturalHeight; put(scaled(old, H * z), alpha * oa, 0, ow, anchorX(old, ch.id) * ow); }
     if (white) put(scaled(e, H * z, '#fff'), alpha * white, 0, Wd, ax);
+    if (tint) put(gsrc, tint, 0, Wd, ax);
     c.imageSmoothingEnabled = true;
     if (st === 'guard' || st === 'block') { // ガード：前面にシールド
       const r = H * (f.cr ? 0.3 : 0.4), hy = -H * (f.cr ? 0.32 : 0.45), hx = Math.min(Wd - ax, H * 0.28) - r * 0.55;
@@ -897,6 +902,8 @@
       case 'warp': sparks(e.x, e.y, '#3dff9a', 10, 5); break;
       case 'shot': fx.rings.push({ x: e.x, y: e.y, r: 4, vr: 5, life: 8, col: CHARS[b.f[e.s].ci].col.g }); break;
       case 'dash': dust(e.x, 5, 2); break;
+      case 'evade': dust(e.x, 4, 2); fx.rings.push({ x: e.x, y: e.y - 60, r: 10, vr: 6, life: 9, col: EV_COL }); break; // 回避ステップ：水色の輪
+      case 'jump2': fx.rings.push({ x: e.x, y: e.y + 4, r: 6, vr: 5, life: 9, col: '#fff' }); sparks(e.x, e.y + 4, '#cfe9ff', 5, 3); break; // 二段ジャンプ：足元に踏み切りの輪
       case 'cmd': { // コマンドコンボ発動：技名をコンボ数表示の下に短時間出す（キャラのテーマカラー）＋足元から光の輪
         const ch = CHARS[b.f[e.s].ci], nm = ch.cmds[e.n].name;
         fx.texts = fx.texts.filter(t => t.kind !== 'cmd' + e.s);

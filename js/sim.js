@@ -5,11 +5,16 @@
   const DATA = NODE ? require('./data.js') : root.NJC, CHARS = DATA.CHARS, CMD_TYPES = DATA.CMD_TYPES;
   const K = { L: 1, R: 2, U: 4, D: 8, A: 16, H: 32, S: 64, G: 128, DL: 256, DR: 512 };
   const GY = 452, XL = 45, XR = 915, GRAV = 0.78, COST = 50, ROUND_FRAMES = 3600, WINS = 2;
+  // ---- BRIEF13: 回避ステップ・二段ジャンプ ----
+  // 回避ステップ（st='evade'）＝相手から離れる方向へのダッシュ。全体 EV_T フレームのうち、出した瞬間から EV_INV フレームは無敵（f.inv。doHit が防御側の inv>0 をスキップするので、
+  // 打撃も飛び道具も当たらず、ガードにもならず、ヒットイベントも出ない）。残りは減速しながらの隙。回避中は攻撃・ガード・ジャンプ不可。クールダウンは通常ダッシュ（28）より長い EV_CD。
+  // 二段ジャンプ＝空中（st='jump'）でジャンプ入力の立ち上がりがあれば、もう1回だけ跳べる（f.jc で回数を数える）。
+  const EV_T = 16, EV_INV = 11, EV_CD = 36, JUMP_VY = -14.5, JUMP2_VY = -12, JUMP_MAX = 2;
 
   function newFighter(ci, side) {
     const c = CHARS[ci];
     return { ci, x: side ? 610 : 350, y: GY, vx: 0, vy: 0, face: side ? -1 : 1, hp: c.hp, meter: 30,
-      st: 'idle', t: 0, atk: '', air: 0, hn: 0, ht: -99, stun: 0, combo: 0, dcd: 0, inv: 0, wins: 0, pi: 0, cr: 0, chainT: 0, lastKind: '', cq: '', ct: 99, chg: 0, cb: 0 }; // chg/cb = ため（BRIEF7）：押し続けているフレーム数と、そのボタンのビット。 cq/ct = コマンド入力の履歴（2文字×ステップ）と最後のステップからの経過フレーム
+      st: 'idle', t: 0, atk: '', air: 0, hn: 0, ht: -99, stun: 0, combo: 0, dcd: 0, inv: 0, jc: 0, wins: 0, pi: 0, cr: 0, chainT: 0, lastKind: '', cq: '', ct: 99, chg: 0, cb: 0 }; // jc = 地面を離れてから使ったジャンプ回数（BRIEF13 二段ジャンプ。着地・被弾で 0）。 chg/cb = ため（BRIEF7）：押し続けているフレーム数と、そのボタンのビット。 cq/ct = コマンド入力の履歴（2文字×ステップ）と最後のステップからの経過フレーム
   }
   function newBattle(c0, c1) {
     return { f: [newFighter(c0, 0), newFighter(c1, 1)], p: [], timer: ROUND_FRAMES, round: 1,
@@ -134,7 +139,7 @@
       d.combo = d.st === 'hit' ? d.combo + 1 : 1;
       const scale = Math.max(0.4, 1 - 0.12 * (d.combo - 1));
       const dmg = Math.max(1, Math.round(m.dmg * ca.pow * scale));
-      d.hp -= dmg; d.st = 'hit'; d.t = 0; d.cr = 0; d.atk = ''; d.air = 0; d.chainT = 0; d.chg = 0; d.cb = 0; // 被弾でチェイン窓は消える。ため中ならチャージも 0 に戻る
+      d.hp -= dmg; d.st = 'hit'; d.t = 0; d.cr = 0; d.atk = ''; d.air = 0; d.jc = 0; d.chainT = 0; d.chg = 0; d.cb = 0; // 被弾でチェイン窓は消える。ため中ならチャージも 0 に戻る
       d.stun = m.hs || 15; d.vx = dir * (m.kb || 4);
       // チェイン：弱系がコンボの1発目として当たる／2段目が当たると、攻撃側に窓が開く。
       // 次の段（idle に戻ってすぐ押した場合＋猶予 CHAIN_LENIENCY フレーム）が連続ヒットになるだけ、のけぞりを延ばす
@@ -239,6 +244,10 @@
     } else if (f.st === 'dash') {
       if (f.t >= 11) { f.st = 'idle'; f.t = 0; f.vx = 0; }
       else if ((pr & (K.A | K.H)) && (f.vx > 0 ? 1 : -1) === f.face) startAtk(b, i, (pr & K.A) ? 'dl' : 'dh'); // 前ダッシュ中の弱/強＝ダッシュ攻撃
+    } else if (f.st === 'evade') {
+      // BRIEF13 回避ステップ：無敵（f.inv）が切れたら減速して隙になる。攻撃・ガード・ジャンプは受け付けない
+      if (f.t >= EV_T) { f.st = 'idle'; f.t = 0; f.vx = 0; }
+      else if (f.t >= EV_INV) f.vx *= 0.72;
     } else if (f.st === 'atk' && f.cb && (inp & f.cb) && b.phase === 'fight') {
       // BRIEF7 ため中：ボタンを押し続けている。予備動作は普通に進み、発生直前（t = su）で止まる。止まっている間は動けず、ガードもできない
       const m = mv(c, f.atk), lv0 = chgLv(f.chg);
@@ -264,6 +273,12 @@
       if (n >= 0) startCmd(b, i, n); else updAtk(b, i, f, o, c);
     } else if (f.st === 'jump') {
       if (pr & K.A) startAtk(b, i, 'al'); else if (pr & K.H) startAtk(b, i, 'ah'); // 空中の弱/強＝落下攻撃
+      else if ((pr & K.U) && f.jc < JUMP_MAX && b.phase === 'fight') {
+        // BRIEF13 二段ジャンプ：上向きの速さを付け直す。横は押している方向へ（押していなければ今の勢いのまま）。少し速くして、相手の頭上を越えやすくする
+        const dx = ((inp & K.R) ? 1 : 0) - ((inp & K.L) ? 1 : 0);
+        f.jc = JUMP_MAX; f.t = 0; f.vy = JUMP2_VY; if (dx) f.vx = dx * (c.spd * 0.95 + 1);
+        b.ev.push({ k: 'jump2', x: f.x, y: f.y, s: i });
+      }
     } else {
       if (f.x !== o.x) f.face = o.x > f.x ? 1 : -1;
       f.cr = 0;
@@ -279,10 +294,16 @@
       }
       else if (inp & K.G) { setSt(f, 'guard'); f.vx = 0; f.cr = (inp & K.D) ? 1 : 0; }
       else if ((pr & (K.DL | K.DR)) && !f.dcd) {
-        f.st = 'dash'; f.t = 0; f.vx = ((pr & K.DL) ? -1 : 1) * (6 + c.spd * 1.2); f.dcd = 28;
-        b.ev.push({ k: 'dash', x: f.x, y: f.y });
+        const dir = (pr & K.DL) ? -1 : 1;
+        if (dir === f.face) { // 相手方向：従来のダッシュ（ダッシュ攻撃に派生できる）
+          f.st = 'dash'; f.t = 0; f.vx = dir * (6 + c.spd * 1.2); f.dcd = 28;
+          b.ev.push({ k: 'dash', x: f.x, y: f.y });
+        } else { // 相手から離れる方向：回避ステップ（出した瞬間から無敵。通常ダッシュより少し速く長い）
+          f.st = 'evade'; f.t = 0; f.vx = dir * (7 + c.spd * 1.2); f.dcd = EV_CD; f.inv = EV_INV;
+          b.ev.push({ k: 'evade', x: f.x, y: f.y, s: i });
+        }
       }
-      else if (inp & K.U) { f.st = 'jump'; f.t = 0; f.vy = -14.5; f.vx = (((inp & K.R) ? 1 : 0) - ((inp & K.L) ? 1 : 0)) * c.spd * 0.95; }
+      else if (inp & K.U) { f.st = 'jump'; f.t = 0; f.jc = 1; f.vy = JUMP_VY; f.vx = (((inp & K.R) ? 1 : 0) - ((inp & K.L) ? 1 : 0)) * c.spd * 0.95; }
       else if (inp & K.D) { setSt(f, 'crouch'); f.vx = 0; }
       else {
         const dx = ((inp & K.R) ? 1 : 0) - ((inp & K.L) ? 1 : 0);
@@ -294,7 +315,7 @@
     if (f.y < GY || f.vy < 0) {
       f.vy += GRAV; f.y += f.vy;
       if (f.y >= GY) {
-        f.y = GY; f.vy = 0;
+        f.y = GY; f.vy = 0; f.jc = 0; // 着地：ジャンプ回数を戻す
         if (f.st === 'jump') { f.st = 'idle'; f.t = 0; f.vx = 0; }
         else if (f.st === 'atk') {
           const m = mv(c, f.atk);
@@ -375,6 +396,9 @@
   // BRIEF8 上級コンボ（c4 / c5）：Lv5 だけが、コマンドを出すと決めたときに AI_ADV の確率で上級を選ぶ。出したあとは AI_ADV_CD フレーム、コマンドコンボ自体を出さない
   const AI_ADV = 0.25, AI_ADV_CD = 420;
   const AI_CHG = [0.03, 0.14, 0.24, 0.34, 0.44], AI_CHG_CD = 150;
+  // BRIEF13 回避ステップ：近くで相手の攻撃（または飛び道具）が見えたとき、ガードの判断より先に、この確率（Lv1〜5）で後ろダッシュ＝回避を選ぶ。
+  // 判断は反応待ち（cd）ごとに1回だけ、クールダウン（dcd 36f）中は出せないので、逃げ続けることはない
+  const AI_EV = [0.02, 0.04, 0.07, 0.1, 0.13];
   function newAI(lv) { return { lv: Math.max(1, Math.min(5, lv)), cd: 20, held: 0, mt: -99, cw: 0, q: [], ccd: 60, gcd: 90, cgb: 0, cgn: 0 }; }
   function aiInput(b, i, ai) {
     let inp = aiThink(b, i, ai);
@@ -444,6 +468,7 @@
     }
     // 相手がためて止まっていて、こちらの技が届くなら、ガードより先に殴りに行く（ため中は無防備）
     if (ocl >= 1 && d < c.h.rng - 4 && (f.st === 'idle' || f.st === 'walk') && R() < AI_T.aggr[n]) { ai.held = 0; ai.cd = Math.round(r * 0.6) + 2; return d < c.l.rng - 4 ? K.A : K.H; }
+    if (threat && !f.dcd && (f.st === 'idle' || f.st === 'walk' || f.st === 'crouch') && R() < AI_EV[n]) { ai.held = 0; ai.cd = EV_T + 2; return o.x > f.x ? K.DL : K.DR; }
     if (threat && R() < AI_T.guard[n]) { held = K.G; ai.cd = r + 8; ai.held = held; return held; }
     if (!ai.gcd && !b.stop && !threat && (f.st === 'idle' || f.st === 'walk') && !f.chainT && o.st !== 'ko' && o.st !== 'hit' && d > c.h.rng + 100 && d < 560) {
       ai.gcd = AI_CHG_CD;
@@ -484,6 +509,6 @@
     return held | tap;
   }
 
-  const api = { K, GY, XL, XR, COST, WINS, CHAIN, CMD_GAP, CHG_LV, chgLv, isChg, cmdKind, isCmd, newBattle, step, mv, isHeavy, hurt, newAI, aiInput };
+  const api = { K, GY, XL, XR, COST, WINS, CHAIN, CMD_GAP, EV_T, EV_INV, EV_CD, JUMP_MAX, CHG_LV, chgLv, isChg, cmdKind, isCmd, newBattle, step, mv, isHeavy, hurt, newAI, aiInput };
   if (NODE) module.exports = api; else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);

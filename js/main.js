@@ -186,7 +186,7 @@
   }
 
   // ---- 効果音つきイベント処理 ----
-  const SND = { block: 'block', sp: 'special', shot: 'shot', warp: 'warp', dash: 'dash', go: 'go', ko: 'ko', timeup: 'ko', over: 'win' };
+  const SND = { block: 'block', sp: 'special', shot: 'shot', warp: 'warp', dash: 'dash', evade: 'dash', jump2: 'dash', go: 'go', ko: 'ko', timeup: 'ko', over: 'win' };
   function fxAndSound(e, b) {
     D.fxEvent(e, b);
     // 弱＝高く軽い音、強＝低く太い音。ダッシュ攻撃・落下攻撃は踏み切り音を足す
@@ -201,13 +201,16 @@
 
   // ================= タイトル =================
   function toTitle() { Net.close(); go(Title()); }
+  // 操作説明（BRIEF13：スティック・2段ジャンプ・回避ステップ）
+  const HELP = ['スティック：選択・移動（上でジャンプ、空中でもう一度上で2段ジャンプ）　○：決定　×：もどる　｜　後ろへ L/R かスティック2回倒しで回避ステップ（無敵）',
+    'PC：矢印 + J/K/L/U・Q/E（ダッシュ／回避）・Enter　♪：ミュート'];
   function Title() {
     const unlockedN = CHARS.filter((c, i) => isUnlocked(i)).length;
     const items = [['アーケード', startArcadeSelect], ['フリーバトル', startFree], ['オンライン対戦', startOnline], [`解放状況  ${unlockedN} / ${CHARS.length}`, () => go(Gallery())], ['ショップ', () => go(ShopScreen())], ['マイページ', () => go(MyPage())]];
     setBtns(items.map((it, i) => ({ x: 340, y: 234 + i * 42, w: 280, h: 36, size: 18, label: it[0], act: it[1] }))); // BRIEF10: 6項目に増えたので 40px・間隔48 → 36px・間隔42 に詰めた
     const demo = [{ ci: 0, x: 120, y: 478, face: 1, st: 'idle', t: 0, vx: 0, atk: '' }, { ci: 1, x: 820, y: 478, face: -1, st: 'idle', t: 0, vx: 0, atk: '' }];
     return {
-      kind: 'title',
+      kind: 'title', help: HELP,
       update(m, pr) { demo[0].t++; demo[1].t++; menuUpdate(pr); },
       draw() {
         D.drawStage(ctx, T, 0.4);
@@ -218,7 +221,7 @@
         ctx.restore();
         D.text(ctx, 'ネオ・ジャパン・クラッシュ（仮）  ― 和 × 電脳 格闘 ―', 480, 218, 15, '#ffe9a8', 'center');
         drawBtns();
-        D.text(ctx, '十字キー：選択　○：決定　×：もどる　♪：ミュート　｜　PC：矢印 + J/K/L/U・Q/E・Enter', 480, 496, 12, '#cfe9ff', 'center');
+        D.text(ctx, HELP[0], 480, 490, 11, '#cfe9ff', 'center'); D.text(ctx, HELP[1], 480, 506, 11, '#cfe9ff', 'center');
       },
     };
   }
