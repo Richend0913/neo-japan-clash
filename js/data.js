@@ -170,7 +170,14 @@
     const r = (v, lo, hi) => Math.max(1, Math.min(5, Math.round(1 + 4 * (v - lo) / (hi - lo))));
     return { hp: r(c.hp, 80, 140), spd: r(c.spd, 2.8, 5.6), pow: r(c.pow, 0.85, 1.3) };
   }
-  const api = { CHARS, INITIAL, stats, CMD_TYPES, cmdText };
+  // ---- BRIEF9: ステージ（見た目だけ。対戦ロジックには関わらない）。pack = 必要な買い切りパックの商品 id（null は最初から使える） ----
+  const STAGES = [
+    { id: 'neon', name: 'ネオン神社', file: 'stage.webp', pack: null },
+    { id: 'bamboo', name: '竹林の決闘場', file: 'stage_bamboo.webp', pack: 'njc_stages_1' },
+    { id: 'snow', name: '雪の城下町', file: 'stage_snow.webp', pack: 'njc_stages_1' },
+    { id: 'sky', name: '空のアリーナ', file: 'stage_sky.webp', pack: 'njc_stages_1' },
+  ];
+  const api = { CHARS, INITIAL, stats, CMD_TYPES, cmdText, STAGES };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);

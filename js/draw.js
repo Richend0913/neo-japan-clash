@@ -65,6 +65,11 @@
   load('stage', 'assets/stage.webp');
   const REQ = {};
   function want(key, src, ax) { if (!REQ[key]) { REQ[key] = true; load(key, src, ax); } }
+  // BRIEF9: ステージ背景は id ごと。最初のステージ（neon）は従来どおり起動時に読み、追加ステージは必要になった時点で読む（キーは 'stage:<id>'）
+  const STAGES = N.STAGES, stageDef = id => STAGES.find(s => s.id === id) || STAGES[0];
+  const stageImgKey = id => { const s = stageDef(id); return s === STAGES[0] ? 'stage' : 'stage:' + s.id; };
+  function preloadStage(id) { const s = stageDef(id); if (s !== STAGES[0]) want('stage:' + s.id, 'assets/' + s.file); }
+  const stageReady = id => { preloadStage(id); return ready(stageImgKey(id)); };
   function wantIdle(ci) { const id = CHARS[ci].id; if (ART[id]) want('s:' + id, `assets/sprites/${id}.webp`, ART[id][0]); }
   function wantPortrait(ci) { const id = CHARS[ci].id; if (ART[id]) want('p:' + id, `assets/portraits/${id}.webp`); }
   function wantPose(ci, ps) { const id = CHARS[ci].id, n = POSES.indexOf(ps); if (ART[id] && n >= 0) want('s:' + id + ':' + ps, `assets/sprites/${id}_${ps}.webp`, ART[id][n + 1]); }
@@ -221,8 +226,8 @@
   // メニュー用の暗幕つき背景も1枚だけキャッシュする。
   // ※ 背景を別の DOM レイヤーに分けて毎フレーム貼らない案も試したが、透明キャンバスの合成が増えて計測上は遅くなったので採っていない
   let stageL = null, stageKey = '', dimL = null, dimKey = '';
-  function stageLayer(dim) {
-    const st = ready('stage'), key = (st ? 'i' : 'v') + CW + 'x' + CHT;
+  function stageLayer(dim, id) {
+    const st = stageReady(id), key = (st ? 'i' : 'v') + stageDef(id).id + CW + 'x' + CHT;
     if (stageKey !== key) {
       stageKey = key; dimKey = ''; stageL = mkCv(CW, CHT); const x = stageL.getContext('2d', { alpha: false });
       x.imageSmoothingQuality = 'high'; x.scale(CW / W, CHT / HH);
@@ -238,9 +243,10 @@
     }
     return dimL;
   }
-  function drawStage(c, t, dim) {
-    const st = ready('stage'), k = 1 - (dim || 0);
-    c.imageSmoothingEnabled = false; c.drawImage(stageLayer(dim || 0), 0, 0, W, HH); c.imageSmoothingEnabled = true;
+  // id = ステージ id（省略時は neon。メニューの背景は常に neon）。画像が未ロードの間は従来どおりベクター背景を出す
+  function drawStage(c, t, dim, id) {
+    const st = stageReady(id), k = 1 - (dim || 0);
+    c.imageSmoothingEnabled = false; c.drawImage(stageLayer(dim || 0, id), 0, 0, W, HH); c.imageSmoothingEnabled = true;
     // 提灯（ゆらぎ発光）※ベクター背景のときだけ。画像背景には提灯が描き込まれている
     c.globalAlpha = k;
     for (let i = 0; !st && i < lanterns.length; i++) {
@@ -259,6 +265,27 @@
       c.globalAlpha = a * 0.35; c.fillRect(h.x - h.s, h.y + h.s * 0.25, h.s * 3, h.s * 0.5);
     }
     c.globalAlpha = 1;
+  }
+  // ステージ選択・ショップ用のサムネイル（表示する実ピクセルの大きさに一度だけ縮小してキャッシュ）。grey = ロック中の表示（彩度を落として暗くする）
+  const thumbs = {};
+  function drawStageThumb(c, id, x, y, w, h, grey) {
+    const st = stageReady(id);
+    if (!st) { c.fillStyle = '#141028'; c.fillRect(x, y, w, h); text(c, '読み込み中…', x + w / 2, y + h / 2, 11, '#8d86b3', 'center'); return; }
+    const pw = Math.round(w * SC), ph = Math.round(h * SC), key = stageDef(id).id + pw + 'x' + ph + (grey ? 'g' : ''); let cv = thumbs[key];
+    if (!cv) {
+      cv = thumbs[key] = mkCv(pw, ph); const q = cv.getContext('2d'); q.imageSmoothingQuality = 'high';
+      const iw = st.im.naturalWidth, ih = st.im.naturalHeight, k = Math.max(pw / iw, ph / ih), sw = pw / k, sh = ph / k;
+      q.drawImage(st.im, (iw - sw) / 2, (ih - sh) / 2, sw, sh, 0, 0, pw, ph);
+      if (grey) { q.globalCompositeOperation = 'saturation'; q.fillStyle = '#808080'; q.fillRect(0, 0, pw, ph); q.globalCompositeOperation = 'source-over'; q.fillStyle = 'rgba(14,12,26,.62)'; q.fillRect(0, 0, pw, ph); }
+    }
+    c.drawImage(cv, x, y, w, h);
+  }
+  // 鍵マーク（絵文字フォントに頼らず線で描く）。(x, y) が中心、s が高さ
+  function drawLock(c, x, y, s, col) {
+    const bw = s * 0.74, bh = s * 0.52, by = y - s / 2 + s * 0.48;
+    c.strokeStyle = col; c.lineWidth = Math.max(2, s * 0.12); c.beginPath(); c.arc(x, by, bw * 0.3, PI, 0); c.lineTo(x + bw * 0.3, by); c.moveTo(x - bw * 0.3, by); c.stroke();
+    c.fillStyle = col; c.fillRect(x - bw / 2, by, bw, bh);
+    c.fillStyle = '#0a0816'; c.beginPath(); c.arc(x, by + bh * 0.42, s * 0.07, 0, PI * 2); c.fill(); c.fillRect(x - s * 0.03, by + bh * 0.42, s * 0.06, bh * 0.34);
   }
   // 花びら（44枚固定）。見た目は従来どおりの回転する楕円だが、save/restore をやめて1本のパスにまとめて1回で塗る
   function drawPetals(c, t) {
@@ -1009,7 +1036,7 @@
     // 揺れは実ピクセル単位に丸める（背景を等倍のまま貼れるように）
     const sx = fx.shake ? Math.round((Math.random() - 0.5) * fx.shake * 2 * SC) / SC : 0, sy = fx.shake ? Math.round((Math.random() - 0.5) * fx.shake * SC) / SC : 0;
     c.save(); c.translate(sx, sy);
-    drawStage(c, T, 0);
+    drawStage(c, T, 0, view && view.stage); // BRIEF9: ステージ id は画面側（view）が持つ。sim の状態 b には入れない
     drawShadow(c, b.f[0]); drawShadow(c, b.f[1]);
     // 着地の検出（描画側だけで持つ。sim には触らない）：空中→接地に変わったフレームから2フレーム強く、3フレーム目は弱く潰す
     const land = [0, 0];
@@ -1064,5 +1091,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawStageThumb, drawLock, preloadStage, stageReady: id => !!stageReady(id), drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
 })();

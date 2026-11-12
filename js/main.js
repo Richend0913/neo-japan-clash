@@ -1,7 +1,7 @@
 // NEO JAPAN CLASH — 画面遷移・モード進行・メインループ
 (function () {
   'use strict';
-  const N = window.NJC, CHARS = N.CHARS, K = N.K, INITIAL = N.INITIAL, D = N.Draw, A = N.Audio, I = N.Input, Net = N.Net;
+  const N = window.NJC, CHARS = N.CHARS, STAGES = N.STAGES, Shop = window.NJCShop, K = N.K, INITIAL = N.INITIAL, D = N.Draw, A = N.Audio, I = N.Input, Net = N.Net;
   const cv = document.getElementById('game'), ctx = cv.getContext('2d', { alpha: false }); // 不透明キャンバス（合成が軽い）
   const W = 960, H = 540, PI = Math.PI;
   let ratio = 1;
@@ -24,8 +24,16 @@
   const SAVE_KEY = 'njc_save_v1';
   const save = { un: {}, mute: false, onlineWins: 0, clears: 0 };
   try { Object.assign(save, JSON.parse(localStorage.getItem(SAVE_KEY) || '{}')); } catch (e) { /* 保存が使えない環境でも遊べる */ }
+  // BRIEF9: 買い切りパックの権利（ent）。旧セーブには無いので既定値を補う（un / mute などの既存項目には触らない）
+  if (!save.un || typeof save.un !== 'object') save.un = {};
+  save.ent = Object.assign({ unlockall: 0, stages1: 0 }, save.ent && typeof save.ent === 'object' ? save.ent : null);
   function persist() { try { localStorage.setItem(SAVE_KEY, JSON.stringify(save)); } catch (e) { /* 同上 */ } }
-  const isUnlocked = ci => ci < INITIAL || !!save.un[CHARS[ci].id];
+  Shop.bind({ get: k => save.ent[k], set(k, v) { save.ent[k] = v ? 1 : 0; persist(); } });
+  // 隠しキャラ：従来の条件で解放済み、または全キャラ解放パックを所有（両立）
+  const isUnlocked = ci => ci < INITIAL || !!save.un[CHARS[ci].id] || Shop.owned('njc_unlock_all');
+  const stageOwned = st => !st.pack || Shop.owned(st.pack);
+  const ownedStages = () => STAGES.filter(stageOwned);
+  const stageName = id => (STAGES.find(st => st.id === id) || STAGES[0]).name;
   function unlock(id) { if (save.un[id]) return false; save.un[id] = 1; persist(); return true; }
   const idx = id => CHARS.findIndex(c => c.id === id);
   function applyMute() { A.setMuted(save.mute); document.getElementById('bMute').classList.toggle('off', save.mute); }
@@ -41,6 +49,10 @@
   function drawBtns() {
     btns.forEach((b, i) => {
       const f = i === focus, col = f ? '#ffd447' : (b.col || '#5fe0ff');
+      if (b.dis) { // 無効ボタン（購入済みなど）：灰色で、フォーカスしても光らせない
+        ctx.fillStyle = 'rgba(30,28,44,.85)'; rr(b.x, b.y, b.w, b.h, 8); ctx.fill(); ctx.strokeStyle = f ? '#b9b3d6' : '#5b5770'; ctx.lineWidth = 2; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke();
+        D.text(ctx, b.label, b.x + b.w / 2, b.y + b.h / 2 + 1, b.size || 19, '#8d86b3', 'center'); return;
+      }
       ctx.fillStyle = f ? 'rgba(90,60,10,.88)' : 'rgba(10,4,30,.82)'; rr(b.x, b.y, b.w, b.h, 8); ctx.fill();
       if (f) { ctx.strokeStyle = '#ffd447'; ctx.globalAlpha = 0.22; ctx.lineWidth = 11; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke(); ctx.globalAlpha = 1; } // フォーカスの発光（ぼかし無し）
       ctx.strokeStyle = col; ctx.lineWidth = f ? 3 : 2; rr(b.x, b.y, b.w, b.h, 8); ctx.stroke();
@@ -59,7 +71,7 @@
     });
     if (best >= 0) { focus = best; A.play('move'); }
   }
-  function press(i) { const b = btns[i]; if (!b) return; focus = i; A.play(b.snd || 'ok'); b.act(); }
+  function press(i) { const b = btns[i]; if (!b) return; focus = i; if (b.dis) { A.play('ng'); return; } A.play(b.snd || 'ok'); b.act(); }
   function menuUpdate(pr) {
     if (pr & K.L) nav(-1, 0); else if (pr & K.R) nav(1, 0); else if (pr & K.U) nav(0, -1); else if (pr & K.D) nav(0, 1);
     else if (pr & (K.A | I.OK)) press(focus);
@@ -89,8 +101,8 @@
   function toTitle() { Net.close(); go(Title()); }
   function Title() {
     const unlockedN = CHARS.filter((c, i) => isUnlocked(i)).length;
-    const items = [['アーケード', startArcadeSelect], ['フリーバトル', startFree], ['オンライン対戦', startOnline], [`解放状況  ${unlockedN} / ${CHARS.length}`, () => go(Gallery())]];
-    setBtns(items.map((it, i) => ({ x: 340, y: 250 + i * 58, w: 280, h: 46, label: it[0], act: it[1] })));
+    const items = [['アーケード', startArcadeSelect], ['フリーバトル', startFree], ['オンライン対戦', startOnline], [`解放状況  ${unlockedN} / ${CHARS.length}`, () => go(Gallery())], ['ショップ', () => go(ShopScreen())]];
+    setBtns(items.map((it, i) => ({ x: 340, y: 240 + i * 48, w: 280, h: 40, label: it[0], act: it[1] }))); // BRIEF9: 5項目に増えたので間隔を 58→48 に詰めた
     const demo = [{ ci: 0, x: 120, y: 478, face: 1, st: 'idle', t: 0, vx: 0, atk: '' }, { ci: 1, x: 820, y: 478, face: -1, st: 'idle', t: 0, vx: 0, atk: '' }];
     return {
       kind: 'title',
@@ -175,7 +187,8 @@
           D.text(ctx, '？？？', px + 16, py + 20, 24, '#8d86b3'); D.text(ctx, 'LOCKED', px + 116, py + 22, 13, '#8d86b3', 'left', true);
           D.text(ctx, '解放条件', px + 16, py + 47, 13, '#cfe9ff');
           D.text(ctx, c.lock, px + 96, py + 47, 18, '#ffd447');
-          D.text(ctx, '条件を満たすとシルエットが解放され、使えるようになります', px + 16, py + 80, 12, '#fff');
+          D.text(ctx, '条件を満たすとシルエットが解放され、使えるようになります', px + 16, py + 71, 12, '#fff');
+          D.text(ctx, 'ショップの全キャラ解放パックでも解放できます', px + 16, py + 88, 11, '#9cf3ff');
         }
         // 技表の帯：カーソルが合っているキャラのコマンドコンボ5つ（技名＋コマンド。弱=○ / 強=×、矢印は相手が右にいるときの向き）
         // 上段＝初級3つ（3列）、下段＝上級2つ（2列。金色の地＋「★上級」バッジ＋★つきの金色の技名で区別）
@@ -217,14 +230,14 @@
   }
 
   // ================= VS 画面 =================
-  function VS(c0, c1, label, labels, next) {
-    let t = 0; setBtns([]); A.play('special'); D.preloadFighter(c0); D.preloadFighter(c1);
+  function VS(c0, c1, label, labels, next, stage) {
+    let t = 0; setBtns([]); A.play('special'); D.preloadFighter(c0); D.preloadFighter(c1); if (stage) D.preloadStage(stage);
     return {
       kind: 'vs',
       update(m, pr) { t++; if (D.warmFighter(c0)) D.warmFighter(c1); if (t > 120 || (t > 20 && (pr & (K.A | I.OK)))) next(); },
       tap() { if (t > 20) next(); return true; },
       draw() {
-        bg(0.66); header(label);
+        bg(0.66); header(label, stage ? 'STAGE：' + stageName(stage) : '');
         const k = Math.min(1, t / 14), off = (1 - k) * 300;
         D.drawPortrait(ctx, c0, 110 - off, 96, 250, 300, { nameSize: 26, t: T, sel: true, selCol: '#ff3d7f' });
         ctx.save(); ctx.translate(850 + off, 0); ctx.scale(-1, 1); D.drawPortrait(ctx, c1, 0, 96, 250, 300, { nameSize: 1, t: T, sel: true, selCol: '#1fd1ff' }); ctx.restore();
@@ -238,12 +251,14 @@
 
   // ================= バトル（オフライン：対 CPU） =================
   function Battle(o) {
-    const b = N.newBattle(o.c0, o.c1), ai = N.newAI(o.lv), view = { ghost: [], labels: o.labels };
+    const stage = (STAGES.find(st => st.id === o.stage) || STAGES[0]).id; // BRIEF9: ステージは見た目だけ。sim の状態 b には入れず、画面側が持つ
+    const b = N.newBattle(o.c0, o.c1), ai = N.newAI(o.lv), view = { ghost: [], labels: o.labels, stage };
+    D.preloadStage(stage);
     let paused = false, done = false;
     D.fxClear(); setBtns([]);
     const finish = () => { if (!done) { done = true; o.onEnd(b.winner === 0); } };
     const s = {
-      kind: 'battle', b,
+      kind: 'battle', b, stage,
       menu() {
         if (b.phase === 'over') return;
         paused = !paused; A.play(paused ? 'ok' : 'back');
@@ -277,10 +292,11 @@
   }
   function arcadeStage(arc) {
     const c1 = arc.opp[arc.stage], lv = arc.stage + 1, labels = ['YOU', 'CPU Lv' + lv];
+    const pool = ownedStages(), stage = pool[Math.floor(Math.random() * pool.length)].id; // BRIEF9: マッチごとに所有ステージからランダム
     go(VS(arc.ci, c1, `ARCADE  STAGE ${lv} / 5` + (lv === 5 ? '  ― FINAL ―' : ''), labels, () => go(Battle({
-      c0: arc.ci, c1, lv, labels,
+      c0: arc.ci, c1, lv, labels, stage,
       onEnd(win) { if (!win) return go(Continue(arc)); arc.stage++; if (arc.stage >= 5) go(Clear(arc)); else arcadeStage(arc); },
-    }))));
+    })), stage));
   }
   function Continue(arc) {
     let t = 0;
@@ -324,17 +340,158 @@
       onPick(ci) {
         go(Select({
           title: 'フリーバトル：対戦相手（CPU）を選択', tag: 'CPU', cur: (ci + 1) % INITIAL, onBack: startFree,
-          onPick(cj) { go(Menu('CPU の強さ', LV_NAMES.map((n, i) => [n, () => freeBattle(ci, cj, i + 1)]).concat([['もどる', startFree, 'back']]), startFree, { focus: 1, sub: `${CHARS[ci].name}  VS  ${CHARS[cj].name}` })); },
+          onPick(cj) { freeLevel(ci, cj, 1); },
         }));
       },
     }));
   }
-  function freeBattle(ci, cj, lv) {
+  // キャラ → CPU の強さ → ステージ（BRIEF9）→ 対戦
+  function freeLevel(ci, cj, f) {
+    go(Menu('CPU の強さ', LV_NAMES.map((n, i) => [n, () => go(StageSelect({ sub: `${CHARS[ci].name}  VS  ${CHARS[cj].name}（${LV_NAMES[i]}）`, onBack: () => freeLevel(ci, cj, i), onPick: st => freeBattle(ci, cj, i + 1, st) }))]).concat([['もどる', startFree, 'back']]), startFree, { focus: f, sub: `${CHARS[ci].name}  VS  ${CHARS[cj].name}` }));
+  }
+  function freeBattle(ci, cj, lv, stage) {
     const labels = ['YOU', 'CPU Lv' + lv];
     go(VS(ci, cj, 'FREE BATTLE', labels, () => go(Battle({
-      c0: ci, c1: cj, lv, labels,
-      onEnd(win) { go(Menu(win ? 'YOU WIN !' : 'YOU LOSE…', [['もう一度', () => freeBattle(ci, cj, lv)], ['キャラ選択へ', startFree], ['タイトルへ', toTitle]], toTitle, { sub: `${CHARS[ci].name}  VS  ${CHARS[cj].name}（${LV_NAMES[lv - 1]}）` })); },
-    }))));
+      c0: ci, c1: cj, lv, labels, stage,
+      onEnd(win) { go(Menu(win ? 'YOU WIN !' : 'YOU LOSE…', [['もう一度', () => freeBattle(ci, cj, lv, stage)], ['キャラ選択へ', startFree], ['タイトルへ', toTitle]], toTitle, { sub: `${CHARS[ci].name}  VS  ${CHARS[cj].name}（${LV_NAMES[lv - 1]}・${stageName(stage)}）` })); },
+    })), stage));
+  }
+
+  // ================= ステージ選択（BRIEF9） =================
+  // 4枚を横一列に並べる。所有ステージだけ決定できる。ロック中は灰色＋鍵マーク＋パック名を出し、決定するとショップへ案内する
+  const SG = { w: 180, h: 101, gap: 12, y: 96 }, sgX = i => 480 - (STAGES.length * SG.w + (STAGES.length - 1) * SG.gap) / 2 + i * (SG.w + SG.gap);
+  let lastStage = 'neon';
+  function StageSelect(o) {
+    STAGES.forEach(st => D.preloadStage(st.id));
+    let cur = Math.max(0, STAGES.findIndex(st => st.id === lastStage)); if (!stageOwned(STAGES[cur])) cur = 0;
+    setBtns([]);
+    const packName = st => Shop.product(st.pack).name;
+    function pick() {
+      const st = STAGES[cur];
+      if (!stageOwned(st)) { A.play('ng'); toastMsg(`このステージは「${packName(st)}」に入っています ― タイトルの「ショップ」へ`, 220); return; }
+      A.play('ok'); lastStage = st.id; o.onPick(st.id);
+    }
+    function mv(d) { const n = STAGES.length; cur = (cur + d + n) % n; A.play('move'); }
+    return {
+      kind: 'stage', back: o.onBack, get cur() { return cur; }, get stageId() { return STAGES[cur].id; },
+      get list() { return STAGES.map((st, i) => ({ id: st.id, name: st.name, owned: stageOwned(st), x: sgX(i), y: SG.y, w: SG.w, h: SG.h })); },
+      update(m, pr) {
+        if (pr & K.L) mv(-1); else if (pr & K.R) mv(1);
+        else if (pr & (K.A | I.OK)) pick();
+        else if (pr & (K.H | I.BACK)) { A.play('back'); o.onBack(); }
+      },
+      tap(x, y) {
+        for (let i = 0; i < STAGES.length; i++) if (inR({ x: sgX(i), y: SG.y, w: SG.w, h: SG.h + 30 }, x, y)) { if (cur === i) pick(); else { cur = i; A.play('move'); } return true; }
+        if (inR(B_BACK, x, y)) { A.play('back'); o.onBack(); return true; }
+        if (inR(B_OK, x, y)) { pick(); return true; }
+        return false;
+      },
+      draw() {
+        bg(0.66); header('STAGE SELECT', o.sub);
+        STAGES.forEach((st, i) => {
+          const x = sgX(i), y = SG.y, own = stageOwned(st), sel = i === cur, col = sel ? '#ffd447' : own ? '#5fe0ff' : '#5b5770';
+          D.drawStageThumb(ctx, st.id, x, y, SG.w, SG.h, !own);
+          ctx.fillStyle = 'rgba(10,4,30,.9)'; ctx.fillRect(x, y + SG.h, SG.w, 30);
+          D.text(ctx, st.name, x + SG.w / 2, y + SG.h + 15, 15, own ? '#fff' : '#b9b3d6', 'center');
+          if (!own) { D.drawLock(ctx, x + SG.w / 2, y + SG.h / 2 - 12, 36, '#d9d4f0'); D.text(ctx, packName(st), x + SG.w / 2, y + SG.h - 16, 12, '#ffe9a8', 'center'); }
+          if (sel) { ctx.strokeStyle = '#ffd447'; ctx.globalAlpha = 0.22; ctx.lineWidth = 12; ctx.strokeRect(x, y, SG.w, SG.h + 30); ctx.globalAlpha = 1; }
+          ctx.strokeStyle = col; ctx.lineWidth = sel ? 4 : 2; ctx.strokeRect(x, y, SG.w, SG.h + 30);
+        });
+        const st = STAGES[cur], own = stageOwned(st), px = 196, py = 262, pw = 568;
+        panel(px, py, pw, 208, own ? '#ffd447' : '#8d86b3');
+        D.drawStageThumb(ctx, st.id, px + 12, py + 12, 327, 184, !own);
+        D.text(ctx, st.name, px + 354, py + 34, 22, own ? '#fff' : '#b9b3d6');
+        if (own) {
+          D.text(ctx, st.pack ? packName(st) : '最初から遊べるステージ', px + 354, py + 64, 12, '#9cf3ff');
+          D.text(ctx, '○ / Enter でこのステージに決定', px + 354, py + 104, 12, '#fff');
+          D.text(ctx, '← → でステージを切替', px + 354, py + 124, 12, '#cfe9ff');
+        } else {
+          D.drawLock(ctx, px + 12 + 327 / 2, py + 12 + 92, 56, '#d9d4f0');
+          D.text(ctx, 'LOCKED', px + 354, py + 62, 13, '#8d86b3', 'left', true);
+          D.text(ctx, packName(st), px + 354, py + 92, 15, '#ffe9a8');
+          D.text(ctx, 'に入っているステージです', px + 354, py + 112, 12, '#fff');
+          D.text(ctx, 'タイトルの「ショップ」で', px + 354, py + 142, 12, '#cfe9ff');
+          D.text(ctx, '内容を確認できます', px + 354, py + 160, 12, '#cfe9ff');
+        }
+        for (const [r, label] of [[B_BACK, '× もどる'], [B_OK, '○ 決定']]) {
+          ctx.fillStyle = 'rgba(10,4,30,.85)'; rr(r.x, r.y, r.w, r.h, 8); ctx.fill(); ctx.strokeStyle = label[0] === '○' ? '#ff5d6c' : '#6fb7ff'; ctx.lineWidth = 2; rr(r.x, r.y, r.w, r.h, 8); ctx.stroke();
+          D.text(ctx, label, r.x + r.w / 2, r.y + r.h / 2 + 1, 16, '#fff', 'center');
+        }
+      },
+    };
+  }
+
+  // ================= ショップ（BRIEF9：買い切りパック） =================
+  // 決済そのものは持たない。NJCShop（js/shop.js）に頼み、返ってきた status をそのまま正直に表示する。
+  // Web 版では app_only が返るので「iOS アプリ版で購入できます」と案内するだけで、購入済みにはならない。
+  const SHOP_MSG = {
+    buy_app_only: '購入は iOS アプリ版で可能です（配信後に有効になります）',
+    restore_app_only: '購入の復元は iOS アプリ版で行えます（配信後に有効になります）',
+    purchased: '購入が完了しました。ありがとうございます！', owned: 'このパックは購入済みです', pending: '購入の承認待ちです（承認されると有効になります）',
+    error: '購入を完了できませんでした。時間をおいてもう一度お試しください', restore_error: '購入を復元できませんでした。時間をおいてもう一度お試しください',
+    restored: '購入を復元しました', restored_none: '復元できる購入はありませんでした',
+  };
+  function ShopScreen() {
+    const P = Shop.PRODUCTS, CX = [196, 488], CY = 66, CWD = 276, CHG = 330;
+    let sig = '', busy = false, last = null;
+    D.preloadPortraits(); STAGES.forEach(st => D.preloadStage(st.id));
+    const say = (key, snd) => { last = key; A.play(snd || 'ng'); toastMsg(SHOP_MSG[key], 240); };
+    function buy(id) {
+      if (busy) return; busy = true;
+      Shop.purchase(id).then(r => {
+        busy = false;
+        if (r.status === 'app_only') say('buy_app_only'); else if (r.status === 'purchased') say('purchased', 'unlock');
+        else if (r.status === 'owned') say('owned'); else if (r.status === 'pending') say('pending', 'ok'); else if (r.status === 'cancelled') last = 'cancelled'; else say('error');
+      });
+    }
+    function restore() {
+      if (busy) return; busy = true;
+      Shop.restore().then(r => {
+        busy = false;
+        if (r.status === 'app_only') say('restore_app_only'); else if (r.status === 'restored') say(r.owned.length ? 'restored' : 'restored_none', r.owned.length ? 'unlock' : 'ok'); else say('restore_error');
+      });
+    }
+    function build(f) {
+      const list = P.map((p, i) => Shop.owned(p.id)
+        ? { x: CX[i] + 28, y: CY + 276, w: CWD - 56, h: 40, label: '購入済み', dis: true, act() {} }
+        : { x: CX[i] + 28, y: CY + 276, w: CWD - 56, h: 40, label: '購入する', col: '#ffd447', act: () => buy(p.id) });
+      list.push({ x: 286, y: 410, w: 200, h: 38, label: '購入を復元', size: 16, act: restore });
+      list.push({ x: 502, y: 410, w: 172, h: 38, label: '× もどる', size: 16, act: toTitle, snd: 'back' });
+      setBtns(list, f || 0);
+    }
+    build();
+    return {
+      kind: 'shop', back: toTitle, get last() { return last; }, get busy() { return busy; },
+      get cards() { return P.map((p, i) => ({ id: p.id, name: p.name, price: p.price, owned: Shop.owned(p.id), x: CX[i], y: CY, w: CWD, h: CHG, btn: btns[i].label, dis: !!btns[i].dis })); },
+      update(m, pr) {
+        const s = P.map(p => Shop.owned(p.id) ? 1 : 0).join('');
+        if (s !== sig) { if (sig) build(focus); sig = s; }
+        menuUpdate(pr);
+      },
+      draw() {
+        bg(0.7); header('SHOP', '買い切りパック ― 一度買えばずっと使えます（ガチャはありません）');
+        P.forEach((p, i) => {
+          const x = CX[i], own = Shop.owned(p.id);
+          panel(x, CY, CWD, CHG, own ? '#4dffb4' : '#ffd447', 0.88);
+          D.text(ctx, p.name, x + CWD / 2, CY + 24, 19, '#fff', 'center');
+          if (p.id === 'njc_unlock_all') { // 隠しキャラ4人の顔ぶれ
+            const w = 58, g = 6, x0 = x + (CWD - (4 * w + 3 * g)) / 2;
+            for (let k = 0; k < 4; k++) D.drawPortrait(ctx, INITIAL + k, x0 + k * (w + g), CY + 46, w, 96, { nameSize: 9 });
+          } else { // 追加ステージ3種
+            const sts = STAGES.filter(st => st.pack === p.id), w = 80, g = 6, x0 = x + (CWD - (sts.length * w + (sts.length - 1) * g)) / 2;
+            sts.forEach((st, k) => {
+              D.drawStageThumb(ctx, st.id, x0 + k * (w + g), CY + 56, w, 45); ctx.strokeStyle = '#5fe0ff'; ctx.lineWidth = 1; ctx.strokeRect(x0 + k * (w + g), CY + 56, w, 45);
+              D.text(ctx, st.name, x0 + k * (w + g) + w / 2, CY + 114, 10, '#fff', 'center');
+            });
+          }
+          p.desc.forEach((line, k) => D.text(ctx, line, x + CWD / 2, CY + 164 + k * 19, k ? 11 : 14, k === 2 ? '#cfe9ff' : k ? '#ffe9a8' : '#fff', 'center'));
+          D.text(ctx, p.price, x + CWD / 2 - 4, CY + 244, 28, '#ffd447', 'right', true);
+          D.text(ctx, '（税込・予定価格）', x + CWD / 2 + 2, CY + 247, 11, '#cfe9ff');
+        });
+        drawBtns();
+        D.text(ctx, Shop.available() ? '購入は App Store の決済で行われます' : 'Web 版は商品のご案内のみです。購入・復元は iOS アプリ版で行えます（配信後に有効になります）', 480, 466, 12, '#ffe9a8', 'center');
+      },
+    };
   }
 
   // ================= オンライン =================
@@ -568,5 +725,7 @@
   requestAnimationFrame(frame);
 
   // 自動確認用の覗き窓（ゲーム進行には使わない）
-  N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, get ratio() { return ratio; }, on, save, isUnlocked, tick, render, fps: fpsStats, adapt };
+  // grant / revoke はテスト用：買い切りパックの権利を直接立てる／下ろして保存する（決済は通らない。本番の購入経路ではない）
+  N.debug = { get scr() { return scr; }, get btns() { return btns; }, get focus() { return focus; }, get ratio() { return ratio; }, get toast() { return toast ? toast.str : ''; }, get T() { return T; }, on, save, isUnlocked, tick, render, fps: fpsStats, adapt,
+    grant: id => Shop.setOwned(id, true), revoke: id => Shop.setOwned(id, false), ownedStages: () => ownedStages().map(st => st.id) };
 })();
