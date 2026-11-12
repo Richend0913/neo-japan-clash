@@ -2,13 +2,13 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<link rel="icon" type="image/png" href="assets/favicon.png?v=20261112a">
+<link rel="icon" type="image/png" href="assets/favicon.png?v=20261112b">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#07041c">
 <title>NEO JAPAN CLASH（仮）</title>
-<link rel="stylesheet" href="style.css?v=20261112a">
+<link rel="stylesheet" href="style.css?v=20261112b">
 </head>
 <body>
 <canvas id="game" width="960" height="540"></canvas>
@@ -35,16 +35,36 @@
   </div>
 </div>
 
+<!-- BRIEF10: 文字入力用の DOM オーバーレイ（プレイヤー名の変更／セーブコード）。開いている間は body.modal が付き、ゲーム側は入力を拾わない -->
+<div id="ovl" hidden>
+  <div id="ovName" class="ovbox" hidden>
+    <h2>プレイヤー名の変更</h2>
+    <input id="ovNameIn" type="text" maxlength="12" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="done" aria-label="プレイヤー名">
+    <p class="ovnote">1〜12文字。この端末のセーブデータに保存されます。</p>
+    <p id="ovNameMsg" class="ovmsg"></p>
+    <div class="ovrow"><button id="ovNameCancel" type="button" class="ovb">やめる</button><button id="ovNameOk" type="button" class="ovb pri">決定</button></div>
+  </div>
+  <div id="ovCode" class="ovbox wide" hidden>
+    <h2>セーブコード</h2>
+    <p class="ovnote">プレイヤーID：<span id="ovPid"></span></p>
+    <textarea id="ovCodeTa" rows="4" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="セーブコード" placeholder="「発行」を押すと、いまのセーブデータ全体がコードになります。別の端末のコードを読み込むときは、ここに貼り付けて「読み込む」を押してください。"></textarea>
+    <p id="ovCodeMsg" class="ovmsg"></p>
+    <div id="ovCodeMain" class="ovrow"><button id="ovCodeClose" type="button" class="ovb">とじる</button><button id="ovCodeIssue" type="button" class="ovb pri">発行</button><button id="ovCodeCopy" type="button" class="ovb">コピー</button><button id="ovCodeLoad" type="button" class="ovb warn">読み込む</button></div>
+    <div id="ovCodeConfirm" class="ovrow" hidden><button id="ovCodeNo" type="button" class="ovb">やめる</button><button id="ovCodeYes" type="button" class="ovb warn">上書きする</button></div>
+    <p class="ovnote small">コードには解放状況・購入済みパックの権利・名前・カラーなどセーブ全体が入ります。他人に見せないでください。</p>
+  </div>
+</div>
+
 <div id="rotate"><div class="phone"></div><p>横にしてください</p><small>このゲームは横画面専用です</small></div>
 
-<script src="js/data.js?v=20261112a"></script>
-<script src="js/sim.js?v=20261112a"></script>
-<script src="js/draw.js?v=20261112a"></script>
-<script src="js/audio.js?v=20261112a"></script>
-<script src="js/input.js?v=20261112a"></script>
-<script src="js/net.js?v=20261112a"></script>
-<script src="js/shop.js?v=20261112a"></script>
-<script src="js/main.js?v=20261112a"></script>
+<script src="js/data.js?v=20261112b"></script>
+<script src="js/sim.js?v=20261112b"></script>
+<script src="js/draw.js?v=20261112b"></script>
+<script src="js/audio.js?v=20261112b"></script>
+<script src="js/input.js?v=20261112b"></script>
+<script src="js/net.js?v=20261112b"></script>
+<script src="js/shop.js?v=20261112b"></script>
+<script src="js/main.js?v=20261112b"></script>
 <script>
 // 起動ウォッチドッグ：古いキャッシュの混在などで起動が止まった場合、一度だけ開き直して自己回復する
 setTimeout(function () {

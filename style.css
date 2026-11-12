@@ -96,3 +96,27 @@ body.portrait #pad { display: none; }
 #boot .bt2 { font-size: 16px; animation: bootblink 1.2s ease-in-out infinite; }
 #boot .bt3 { font-size: 12px; opacity: .65; }
 @keyframes bootblink { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+/* BRIEF10: 文字入力用の DOM オーバーレイ（名前変更・セーブコード）。上寄せにして、スマホのキーボードが出ても入力欄が隠れにくくする */
+#ovl { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: max(8px, 3vh) 12px 8px; background: rgba(5, 3, 15, .82); overflow: auto; touch-action: auto; }
+#ovl[hidden], #ovl [hidden] { display: none; }
+.ovbox { width: min(420px, 100%); padding: 12px 16px 14px; border: 2px solid #5fe0ff; border-radius: 10px; background: rgba(14, 6, 40, .97); box-shadow: 0 0 22px rgba(95, 224, 255, .35); }
+.ovbox.wide { width: min(600px, 100%); }
+.ovbox h2 { margin: 0 0 8px; font-size: 17px; font-weight: 900; color: #ff7ad9; letter-spacing: .06em; }
+.ovbox input, .ovbox textarea {
+  display: block; width: 100%; padding: 8px 10px; border: 2px solid #5fe0ff; border-radius: 8px; background: #07041c; color: #fff; font: inherit; font-size: 16px; /* 16px 未満だと iOS が入力時に拡大する */
+  user-select: text; -webkit-user-select: text; touch-action: auto; outline: none;
+}
+.ovbox textarea { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.35; resize: none; word-break: break-all; height: 96px; }
+.ovbox input:focus, .ovbox textarea:focus { border-color: #ffd447; }
+.ovnote { margin: 6px 0 0; font-size: 12px; color: #cfe9ff; }
+.ovnote.small { font-size: 11px; color: #9fa6c9; }
+#ovPid { font-family: ui-monospace, Menlo, Consolas, monospace; color: #ffe9a8; user-select: text; -webkit-user-select: text; }
+.ovmsg { margin: 6px 0 0; min-height: 17px; font-size: 13px; font-weight: 700; color: #ffd447; }
+.ovmsg.err { color: #ff7a8a; }
+.ovmsg.ok { color: #4dffb4; }
+.ovrow { display: flex; gap: 8px; justify-content: flex-end; margin-top: 8px; flex-wrap: wrap; }
+.ovb { min-width: 84px; min-height: 40px; padding: 6px 14px; border: 2px solid #5fe0ff; border-radius: 8px; background: rgba(10, 4, 30, .9); color: #fff; font: inherit; font-size: 15px; font-weight: 900; cursor: pointer; touch-action: manipulation; }
+.ovb.pri { border-color: #ffd447; color: #fff6c8; background: rgba(90, 60, 10, .88); }
+.ovb.warn { border-color: #ff5d6c; color: #ffd9de; }
+.ovb:focus-visible { outline: 3px solid #fff; outline-offset: 1px; }

@@ -70,16 +70,19 @@
   const stageImgKey = id => { const s = stageDef(id); return s === STAGES[0] ? 'stage' : 'stage:' + s.id; };
   function preloadStage(id) { const s = stageDef(id); if (s !== STAGES[0]) want('stage:' + s.id, 'assets/' + s.file); }
   const stageReady = id => { preloadStage(id); return ready(stageImgKey(id)); };
-  function wantIdle(ci) { const id = CHARS[ci].id; if (ART[id]) want('s:' + id, `assets/sprites/${id}.webp`, ART[id][0]); }
+  // BRIEF10: カラーバリエーション v（0=通常 / 1 / 2）。通常色のキーは従来どおり 's:<id>' / 's:<id>:<pose>'、別カラーは末尾に '@v1' / '@v2' を付けた別キーで持つ
+  // （ファイルは <id>_v1.webp / <id>_<pose>_v1.webp）。形は通常色と同じなので ART のアンカーを共用する。読み込みは want() の遅延読み込みのまま＝使うカラーの分だけ読む。
+  const vOf = v => (v === 1 || v === 2 ? v : 0), vKey = v => (vOf(v) ? '@v' + vOf(v) : ''), vFile = v => (vOf(v) ? '_v' + vOf(v) : '');
+  function wantIdle(ci, v) { const id = CHARS[ci].id; if (ART[id]) want('s:' + id + vKey(v), `assets/sprites/${id}${vFile(v)}.webp`, ART[id][0]); }
   function wantPortrait(ci) { const id = CHARS[ci].id; if (ART[id]) want('p:' + id, `assets/portraits/${id}.webp`); }
-  function wantPose(ci, ps) { const id = CHARS[ci].id, n = POSES.indexOf(ps); if (ART[id] && n >= 0) want('s:' + id + ':' + ps, `assets/sprites/${id}_${ps}.webp`, ART[id][n + 1]); }
-  function preloadFighter(ci) { wantIdle(ci); wantPortrait(ci); POSES.forEach(ps => wantPose(ci, ps)); }
+  function wantPose(ci, ps, v) { const id = CHARS[ci].id, n = POSES.indexOf(ps); if (ART[id] && n >= 0) want('s:' + id + ':' + ps + vKey(v), `assets/sprites/${id}_${ps}${vFile(v)}.webp`, ART[id][n + 1]); }
+  function preloadFighter(ci, v) { wantIdle(ci, v); wantPortrait(ci); POSES.forEach(ps => wantPose(ci, ps, v)); }
   function preloadPortraits() { CHARS.forEach((c, i) => wantPortrait(i)); }
   function preloadAll() { CHARS.forEach((c, i) => preloadFighter(i)); }
   const ready = key => { const e = IMG[key]; return e && e.ok ? e : null; };
-  const spriteOf = ci => { wantIdle(ci); return ready('s:' + CHARS[ci].id); };
+  const spriteOf = (ci, v) => { wantIdle(ci, v); return ready('s:' + CHARS[ci].id + vKey(v)); };
   const portraitOf = ci => { wantPortrait(ci); return ready('p:' + CHARS[ci].id); };
-  const poseOf = (ci, ps) => { wantPose(ci, ps); return ready('s:' + CHARS[ci].id + ':' + ps); };
+  const poseOf = (ci, ps, v) => { wantPose(ci, ps, v); return ready('s:' + CHARS[ci].id + ':' + ps + vKey(v)); };
   // 不透明部分の重心の横位置（0〜1）。細い武器が長く突き出ていても胴体側に寄る
   function anchorX(e, id) {
     if (e.ax != null) return e.ax;
@@ -113,7 +116,7 @@
     return cv;
   }
   const clamp01 = v => Math.max(0, Math.min(1, v));
-  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
+  const assetState = () => ({ listed: Object.keys(ART).length, stage: !!ready('stage'), sprites: Object.keys(ART).filter(id => ready('s:' + id)), poses: Object.keys(ART).reduce((n, id) => n + POSES.filter(ps => ready('s:' + id + ':' + ps)).length, 0), portraits: Object.keys(ART).filter(id => ready('p:' + id)), variants: Object.keys(IMG).filter(k => /@v[12]$/.test(k) && IMG[k].ok), requested: Object.keys(IMG).filter(k => /@v[12]$/.test(k)), failed: Object.keys(IMG).filter(k => IMG[k].bad) });
 
   // ================= ステージ =================
   let stageCv = null;
@@ -639,7 +642,7 @@
     const m = st === 'atk' ? N.mv(ch, f.atk) : null, ty = m && f.atk === 's' ? m.type : '';
     const kind = o.win ? '' : poseKind(f, m);
     // ポーズ絵が未ロードなら待機絵（強攻撃ポーズが未ロードの間は通常の攻撃ポーズ）
-    const pe = kind ? (poseOf(f.ci, kind) || (kind === 'hev' ? poseOf(f.ci, 'atk') : null)) : null;
+    const pe = kind ? (poseOf(f.ci, kind, o.v) || (kind === 'hev' ? poseOf(f.ci, 'atk', o.v) : null)) : null;
     const e = pe || idle, im = e.im, z = (o.zoom || 1) * SC;
     // 高さを待機絵と同じ H に揃える（攻撃絵は武器ぶん横に広いだけで、体の大きさは変わらない）
     const H = spriteH(ch), Wd = im.naturalWidth * H / im.naturalHeight, ax = anchorX(e, ch.id) * Wd;
@@ -751,27 +754,29 @@
   }
   // バトル前の先回り：そのキャラの絵を表示サイズに縮小したキャッシュを、1回の呼び出しにつき1枚ずつ作る（VS 画面・ラウンド開始演出の間に呼ぶ）。
   // 試合中に初めて出るポーズで画像のデコードと縮小が走り、一瞬止まるのを防ぐ。全部そろったら true
-  function warmFighter(ci) {
+  function warmFighter(ci, v) {
     const ch = CHARS[ci], id = ch.id; if (!ART[id]) return true;
-    const hpx = Math.round(spriteH(ch) * SC); let pending = false;
-    for (const k of ['s:' + id].concat(POSES.map(ps => 's:' + id + ':' + ps))) {
+    const hpx = Math.round(spriteH(ch) * SC), vk = vKey(v); let pending = false;
+    for (const k of ['s:' + id + vk].concat(POSES.map(ps => 's:' + id + ':' + ps + vk))) {
       const e = IMG[k]; if (!e || (!e.ok && !e.bad)) { pending = true; continue; }
       if (e.ok && !e.sc[hpx]) { scaled(e, hpx); return false; }
     }
-    const hit = ready('s:' + id + ':hit'); if (hit && !hit.sc[hpx + '#fff']) { scaled(hit, hpx, '#fff'); return false; }
+    const hit = ready('s:' + id + ':hit' + vk); if (hit && !hit.sc[hpx + '#fff']) { scaled(hit, hpx, '#fff'); return false; }
     return !pending;
   }
   const hasSprite = ci => !!spriteOf(ci);
   // スプライトがあればスプライト、無い・未ロードならベクター描画（o.sil=シルエット指定は常にベクター）
+  // o.v = カラーバリエーション（BRIEF10）。別カラーの絵が読み込み中の間は、読み込み済みなら通常色の絵で代用する（通常色を新たに読みには行かない）
   function drawFighter(c, f, o) {
     o = o || {};
-    const e = o.sil ? null : spriteOf(f.ci);
+    const e = o.sil ? null : (spriteOf(f.ci, o.v) || (vOf(o.v) ? ready('s:' + CHARS[f.ci].id) : null));
     if (e) drawSprite(c, f, o, e); else drawFighterVec(c, f, o);
   }
+  const variantReady = (ci, v) => !!spriteOf(ci, v);
   // 足元の楕円の影（高く跳ぶほど小さく薄く）
   function drawShadow(c, f) {
     const ch = CHARS[f.ci], k = Math.max(0.35, 1 - (GY - f.y) / 260);
-    const rx = (spriteOf(f.ci) ? spriteH(ch) * 0.27 : 38 * ch.b.wd), ry = spriteOf(f.ci) ? 11 : 8;
+    const art = !!ART[ch.id], rx = (art ? spriteH(ch) * 0.27 : 38 * ch.b.wd), ry = art ? 11 : 8; // 影の大きさは絵の有無だけで決める（読み込み状況やカラーに左右されない）
     c.fillStyle = `rgba(4,0,14,${0.3 + 0.28 * k})`; c.beginPath(); c.ellipse(f.x, GY + 4, rx * k, ry * k, 0, 0, PI * 2); c.fill();
     c.fillStyle = ch.col.g; c.globalAlpha = 0.13 * k; c.beginPath(); c.ellipse(f.x, GY + 4, rx * 1.3 * k, ry * 1.4 * k, 0, 0, PI * 2); c.fill(); c.globalAlpha = 1;
   }
@@ -1049,8 +1054,9 @@
     }
     // 攻撃中の側を手前に描く
     const front = b.f[1].st === 'atk' ? 1 : 0;
-    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front], slot: 1 - front, frame: b.frame });
-    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front], slot: front, frame: b.frame });
+    const vc = (view && view.col) || [0, 0]; // BRIEF10: カラーは画面側（view.col = [P1, P2]）が持つ。sim の状態 b には入れない
+    drawFighter(c, b.f[1 - front], { win: b.phase === 'over' && b.winner === 1 - front, land: land[1 - front], slot: 1 - front, frame: b.frame, v: vc[1 - front] });
+    drawFighter(c, b.f[front], { win: b.phase === 'over' && b.winner === front, land: land[front], slot: front, frame: b.frame, v: vc[front] });
     drawCharge(c, b.f[0], b.frame); drawCharge(c, b.f[1], b.frame);
     for (const p of b.p) drawProj(c, p, b);
     drawFx(c); drawPetals(c, T);
@@ -1091,5 +1097,5 @@
     if (o.tag) { c.fillStyle = o.selCol || '#ffd447'; c.fillRect(x, y - 1, 44, 16); c.font = font(11, true); c.fillStyle = '#12061f'; c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillText(o.tag, x + 22, y + 7.5); }
   }
 
-  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawStageThumb, drawLock, preloadStage, stageReady: id => !!stageReady(id), drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
+  N.Draw = { W, H: HH, FONT, font, text, neonText, glow, noGlow, setScale, drawStage, drawStageThumb, drawLock, preloadStage, stageReady: id => !!stageReady(id), drawPetals, drawFighter, drawBattle, drawPortrait, hasSprite, variantReady, assetState, preloadFighter, warmFighter, preloadPortraits, preloadAll, poseKind, fxEvent, fxTick, fxClear, fx };
 })();

@@ -12,14 +12,20 @@
     // 押下はラッチしておき、フレームの合間に押して離した短いタップも必ず1フレーム分は拾う
     mask() { const m = this.keys | this.pad | this.latch; this.latch = 0; return m; } };
 
+  // BRIEF10: DOM の入力オーバーレイ（名前変更・セーブコード）を開いている間は body.modal が付く。
+  // その間はゲーム側でキーやタッチを拾わず、preventDefault もしない（input / textarea に普通に打てて、選択・貼り付けもできるように）
+  const modal = () => document.body.classList.contains('modal');
   addEventListener('keydown', e => {
+    if (modal()) return;
     if (I.onGesture) I.onGesture();
     if (e.code === 'KeyM') { if (!e.repeat && I.onMute) I.onMute(); return; }
     if (e.code === 'KeyP') { if (!e.repeat) document.body.classList.toggle('nopad'); return; }
     if (e.code === 'KeyF') { if (!e.repeat && I.onFps) I.onFps(); return; }
     if (/^(Digit|Numpad)\d$/.test(e.code)) { if (I.onDigit) I.onDigit(+e.code.slice(-1)); return; }
     if (e.code === 'Backspace') { if (I.onDigit) I.onDigit(-1); e.preventDefault(); return; }
-    const b = KEYS[e.code]; if (b) { if (!e.repeat) I.latch |= b; I.keys |= b; e.preventDefault(); }
+    const b = KEYS[e.code];
+    // 押し始めを見ていないキーの自動リピートは無視する（オーバーレイを Enter で閉じたあと、押しっぱなしの Enter が新しい押下に化けないように）
+    if (b) { e.preventDefault(); if (e.repeat && !(I.keys & b)) return; if (!e.repeat) I.latch |= b; I.keys |= b; }
   });
   addEventListener('keyup', e => { const b = KEYS[e.code]; if (b) I.keys &= ~b; });
   addEventListener('blur', () => { I.keys = 0; ptrs.clear(); recompute(); });
@@ -67,6 +73,7 @@
   }
   const inside = (el, e) => { const r = el.getBoundingClientRect(); return r.width && e.clientX >= r.left - 6 && e.clientX <= r.right + 6 && e.clientY >= r.top - 6 && e.clientY <= r.bottom + 6; };
   addEventListener('pointerdown', e => {
+    if (modal()) return;
     if (I.onGesture) I.onGesture();
     if (document.body.classList.contains('portrait')) return;
     const pad = !document.body.classList.contains('nopad'), hit = pad ? hitTest(e.clientX, e.clientY) : null;
@@ -113,8 +120,8 @@
     requestAnimationFrame(draw);
   }
   addEventListener('pointerup', up); addEventListener('pointercancel', up);
-  for (const ev of ['contextmenu', 'gesturestart', 'dblclick', 'selectstart']) addEventListener(ev, e => e.preventDefault());
-  addEventListener('touchmove', e => e.preventDefault(), { passive: false });
+  for (const ev of ['contextmenu', 'gesturestart', 'dblclick', 'selectstart']) addEventListener(ev, e => { if (!modal()) e.preventDefault(); });
+  addEventListener('touchmove', e => { if (!modal()) e.preventDefault(); }, { passive: false });
 
   I.hitTest = hitTest; // 自動確認用
   N.Input = I;

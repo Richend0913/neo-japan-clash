@@ -1,4 +1,4 @@
-// NEO JAPAN CLASH — 買い切りパックの購入ブリッジ（BRIEF9）
+// NEO JAPAN CLASH — 買い切りパックの購入ブリッジ（BRIEF9。BRIEF10 で商品を4点に）
 // ゲーム側が知っているのは「商品一覧」と「権利（エンタイトルメント）を持っているか」だけ。実際の決済はここでは行わない。
 // iOS アプリ版が後から window.NJCPurchaseHandler を差し込むと、purchase / restore がそこへ委譲される（RevenueCat / StoreKit を想定）。
 //
@@ -17,6 +17,11 @@
       desc: ['隠しキャラ4人をすぐに使えます', '黒天狗・龍神Ω・無銘・カグヤ.exe', '（クリア条件での解放もそのまま残ります）'] },
     { id: 'njc_stages_1', ent: 'stages1', name: '追加ステージパック第1弾', price: '¥480',
       desc: ['新しいステージ3種を追加', '竹林の決闘場・雪の城下町・空のアリーナ', '（フリーバトルで選択／アーケードはランダム）'] },
+    // BRIEF10
+    { id: 'njc_colors_1', ent: 'colors1', name: 'カラーバリエーションパック第1弾', price: '¥480',
+      desc: ['全14キャラに新カラー2色を追加', 'キャラ選択で L / R を押して切替', '（アーケード／フリーバトルの自分のキャラ）'] },
+    { id: 'njc_mypage_1', ent: 'mypage1', name: 'マイページカスタムパック', price: '¥480',
+      desc: ['マイページ用の追加セット', '称号6種・フレーム4種・背景3種', '（見た目だけ。対戦の強さは変わりません）'] },
   ];
   const product = id => PRODUCTS.find(p => p.id === id) || null;
   const SAVE_KEY = 'njc_save_v1';

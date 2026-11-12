@@ -177,7 +177,42 @@
     { id: 'snow', name: '雪の城下町', file: 'stage_snow.webp', pack: 'njc_stages_1' },
     { id: 'sky', name: '空のアリーナ', file: 'stage_sky.webp', pack: 'njc_stages_1' },
   ];
-  const api = { CHARS, INITIAL, stats, CMD_TYPES, cmdText, STAGES };
+  // ---- BRIEF10: マイページのカスタムカタログ（見た目だけ。対戦には関わらない） ----
+  // 解放の種類は3つ：無印＝最初から使える ／ cond＝実績（セーブの数値 k が n 以上で解放。lock は条件の説明文） ／ pack＝買い切りパックの商品 id が必要
+  const MP = 'njc_mypage_1';
+  const MYPAGE = {
+    titles: [
+      { id: 'rookie', name: 'かけだし闘士' },
+      { id: 'traveler', name: 'ネオン街の旅人' },
+      { id: 'student', name: '電脳道場の門下生' },
+      { id: 'win10', name: '十勝の猛者', cond: { k: 'wins', n: 10 }, lock: 'CPU戦で10勝する' },
+      { id: 'clear1', name: 'アーケード覇者', cond: { k: 'clears', n: 1 }, lock: 'アーケードを1回クリアする' },
+      { id: 'clear5', name: '五度制覇の達人', cond: { k: 'clears', n: 5 }, lock: 'アーケードを5回クリアする' },
+      { id: 'online1', name: '電脳の挑戦者', cond: { k: 'onlineWins', n: 1 }, lock: 'オンライン対戦で1勝する' },
+      { id: 'shogun', name: '電脳将軍', pack: MP },
+      { id: 'legend', name: 'ネオン街の伝説', pack: MP },
+      { id: 'moon', name: '月下の剣聖', pack: MP },
+      { id: 'hyakki', name: '百鬼夜行の主', pack: MP },
+      { id: 'sakura', name: '桜吹雪の舞手', pack: MP },
+      { id: 'raimei', name: '雷鳴の覇王', pack: MP },
+    ],
+    // フレーム：無料は「標準（フレームなし）」の1つ。有料4種は canvas の線画で描く（画像なし）
+    frames: [
+      { id: 'none', name: '標準（フレームなし）' },
+      { id: 'gold', name: '黄金の額縁', pack: MP },
+      { id: 'neon', name: 'ネオン管', pack: MP },
+      { id: 'sakura', name: '桜吹雪', pack: MP },
+      { id: 'raijin', name: '雷神', pack: MP },
+    ],
+    // 背景：ステージ背景の流用（stage = STAGES の id）。マイページの背景としての権利で、対戦ステージの権利（追加ステージパック）とは別
+    bgs: [
+      { id: 'neon', name: 'ネオン神社', stage: 'neon' },
+      { id: 'bamboo', name: '竹林の決闘場', stage: 'bamboo', pack: MP },
+      { id: 'snow', name: '雪の城下町', stage: 'snow', pack: MP },
+      { id: 'sky', name: '空のアリーナ', stage: 'sky', pack: MP },
+    ],
+  };
+  const api = { CHARS, INITIAL, stats, CMD_TYPES, cmdText, STAGES, MYPAGE };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.NJC = Object.assign(root.NJC || {}, api);
 })(typeof window !== 'undefined' ? window : globalThis);
