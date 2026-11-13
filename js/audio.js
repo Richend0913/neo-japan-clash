@@ -1,16 +1,14 @@
-// NEO JAPAN CLASH — WebAudio 効果音・BGM（外部素材なし・すべて合成）＋キャラボイス（assets/voice/*.mp3。VOICEVOX で生成）
+// NEO JAPAN CLASH — WebAudio 効果音・BGM（外部素材なし・すべて合成）
 (function () {
   'use strict';
   const N = window.NJC;
-  const VER = ((document.currentScript && /\?v=\w+/.exec(document.currentScript.src)) || [''])[0]; // ボイスの取得にも index.html と同じ stamp を付ける
-  // 音量の配分：master 0.5 の下に SE（直結）・BGM（控えめ）・ボイス
-  const MASTER_VOL = 0.5, BGM_VOL = 0.30, VOICE_VOL = 1.1;
-  let ac = null, master = null, bgmBus = null, voiceBus = null, noiseBuf = null, muted = false;
+  // 音量の配分：master 0.5 の下に SE（直結）・BGM（控えめ）
+  const MASTER_VOL = 0.5, BGM_VOL = 0.30;
+  let ac = null, master = null, bgmBus = null, noiseBuf = null, muted = false;
   function mkNoise(ctx) { const b = ctx.createBuffer(1, ctx.sampleRate * 0.5, ctx.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; }
   function build(ctx, vol) {
     master = ctx.createGain(); master.gain.value = vol; master.connect(ctx.destination);
     bgmBus = ctx.createGain(); bgmBus.gain.value = BGM_VOL; bgmBus.connect(master);
-    voiceBus = ctx.createGain(); voiceBus.gain.value = VOICE_VOL; voiceBus.connect(master);
     noiseBuf = mkNoise(ctx);
   }
   function ensure() {
@@ -203,52 +201,22 @@
   }
   document.addEventListener('visibilitychange', syncBgm);
 
-  // ================= キャラボイス（BRIEF14） =================
-  // 優先度：special > ko（＝ win）> hurt > atk。同じキャラが喋っている間は、優先度の低い声を落とす（同じか高ければ前の声を切って差し替える）。別キャラの声は重なってよい
-  const V_KINDS = ['atk_l', 'atk_h', 'special', 'hurt', 'ko', 'win'], V_PRI = { special: 4, ko: 3, win: 3, hurt: 2, atk_h: 1, atk_l: 1 };
-  const V_GAP = { atk: 250, hurt: 300 }, ATK_L_RATE = 0.7; // 同一キャラの間隔制限（ms）と、弱攻撃の声を出す確率
-  const vo = { buf: {}, req: {}, cur: {}, last: {}, played: 0, lastPlay: null, dropped: 0 };
-  function voicePreload(ids) {
-    if (!ensure() || !window.fetch) return;
-    for (const id of ids) for (const k of V_KINDS) {
-      const key = id + '_' + k; if (vo.req[key]) continue; vo.req[key] = 1;
-      fetch('assets/voice/' + key + '.mp3' + VER).then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error('http ' + r.status))))
-        .then(ab => new Promise((res, rej) => ac.decodeAudioData(ab, res, rej))).then(b => { vo.buf[key] = b; }).catch(() => { vo.req[key] = 0; }); // 失敗したら次の対戦でもう一度試す（声が無くてもゲームは続く）
-    }
-  }
-  function voiceCut(c, t) { try { c.g.gain.setTargetAtTime(0, t, 0.012); c.src.stop(t + 0.07); } catch (e) { /* 既に止まっている */ } }
-  function voice(id, kind) {
-    const pri = V_PRI[kind], b = vo.buf[id + '_' + kind];
-    if (muted || !pri || !b || !ensure()) return false;
-    const now = performance.now(), lk = pri === 1 ? 'atk' : kind, gap = V_GAP[lk], lkey = id + ':' + lk;
-    if (gap && now - (vo.last[lkey] || -1e9) < gap) return false;
-    if (kind === 'atk_l' && Math.random() >= ATK_L_RATE) return false;
-    const t = ac.currentTime, c = vo.cur[id];
-    if (c && c.end > t) { if (c.pri > pri) { vo.dropped++; return false; } voiceCut(c, t); }
-    const src = ac.createBufferSource(), g = ac.createGain(); src.buffer = b; src.connect(g); g.connect(voiceBus); src.start(t);
-    vo.cur[id] = { pri, kind, end: t + b.duration, src, g }; vo.last[lkey] = now; vo.played++; vo.lastPlay = { id, kind };
-    return true;
-  }
-  function voiceStop() { if (!ac) return; const t = ac.currentTime; for (const id of Object.keys(vo.cur)) { voiceCut(vo.cur[id], t); delete vo.cur[id]; } }
   // ---- 確認用：実時間を待たずに音を書き出す（OfflineAudioContext）。音量の測定と試聴ファイル作りに使う。ゲーム進行には使わない ----
   function render(sec, fill) {
-    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext, sr = 44100, oc = new OC(1, Math.ceil(sr * sec), sr), sav = [ac, master, bgmBus, voiceBus, noiseBuf];
-    try { ac = oc; build(oc, MASTER_VOL); fill(); } finally { [ac, master, bgmBus, voiceBus, noiseBuf] = sav; }
+    const OC = window.OfflineAudioContext || window.webkitOfflineAudioContext, sr = 44100, oc = new OC(1, Math.ceil(sr * sec), sr), sav = [ac, master, bgmBus, noiseBuf];
+    try { ac = oc; build(oc, MASTER_VOL); fill(); } finally { [ac, master, bgmBus, noiseBuf] = sav; }
     return oc.startRendering().then(b => b.getChannelData(0));
   }
-  const VOICE_CREDITS = ['青山龍星', '雨晴はう', '黒沢冴白', '麒ヶ島宗麟', '九州そら', '玄野武宏', '後鬼', '四国めたん', '波音リツ', 'Voidoll', '剣崎雌雄', '離途', 'No.7']; // 使用した話者（tools/gen-voices.py の SPEAKERS と同じ。重複なし）
 
   N.Audio = {
     unlock() { const ok = ensure(); bgm.gestured = true; syncBgm(); return ok; },
     play(name) { if (muted || !S[name]) return; if (!ensure()) return; try { S[name](); } catch (e) { /* 音が出せなくても続行 */ } },
-    setMuted(m) { muted = !!m; if (master) master.gain.value = muted ? 0 : MASTER_VOL; if (muted) voiceStop(); syncBgm(); },
+    setMuted(m) { muted = !!m; if (master) master.gain.value = muted ? 0 : MASTER_VOL; syncBgm(); },
     get muted() { return muted; },
     // BGM：画面が望む曲 id を伝える（同じ id なら何もしない。null で止める）
     bgm(id) { id = TRACKS[id] ? id : null; if (id !== bgm.want) { bgm.want = id; syncBgm(); } },
     get bgmState() { const c = bgm.cur; return { id: c ? c.id : null, want: bgm.want, playing: !!c && !!ac && ac.state === 'running', step: c ? c.step : 0, starts: bgm.starts, ctx: ac ? ac.state : 'none' }; },
     bgmTracks: Object.keys(TRACKS), bgmInfo: id => { const t = TRACK_SRC[id]; return t && { name: t.name, bpm: t.bpm, bars: t.bars, key: t.key, prog: t.prog, parts: t.parts.map(p => p.inst), drums: Object.keys(t.drums || {}) }; },
-    voicePreload, voice, VOICE_KINDS: V_KINDS, VOICE_CREDITS,
-    get voiceState() { const t = ac ? ac.currentTime : 0; return { loaded: Object.keys(vo.buf).length, active: Object.keys(vo.cur).filter(id => vo.cur[id].end > t).map(id => id + '_' + vo.cur[id].kind), played: vo.played, dropped: vo.dropped, last: vo.lastPlay }; },
     renderBgm: (id, sec) => render(sec, () => { const tr = TRACKS[id]; for (let n = 0, t = 0.05; t < sec; n++, t += tr.step) schedStep(tr, n % (tr.bars * 16), t, bgmBus); }),
     renderSe: (name, sec) => render(sec || 1, () => S[name]()),
   };
